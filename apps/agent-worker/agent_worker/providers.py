@@ -19,6 +19,7 @@ log = logging.getLogger("providers")
 # first waits for the dead provider to fail before the backup takes over (seen: +5 s on the first turn).
 _down_until: dict[str, float] = {}
 DOWN_SECONDS = 600
+TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))   # lower = steadier answers; tuned against the grounding tests
 
 
 def is_down(provider: str) -> bool:
@@ -72,13 +73,13 @@ def _llm(spec: dict, max_tokens: int):
     p = spec["provider"]
     if p == "groq" and _has("GROQ_API_KEY"):
         return openai.LLM(model=spec["model"], base_url="https://api.groq.com/openai/v1",
-                          api_key=os.environ["GROQ_API_KEY"], temperature=0.2,
+                          api_key=os.environ["GROQ_API_KEY"], temperature=TEMPERATURE,
                           max_completion_tokens=max_tokens, reasoning_effort=spec.get("reasoning_effort", "low"))
     if p == "gemini" and _has("GEMINI_API_KEY", "GOOGLE_API_KEY"):
         return google.LLM(model=spec["model"], api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
-                          temperature=0.2, max_output_tokens=max_tokens)
+                          temperature=TEMPERATURE, max_output_tokens=max_tokens)
     if p == "openai" and _has("OPENAI_API_KEY"):  # switch via YAML once an OpenAI key exists
-        return openai.LLM(model=spec["model"], temperature=0.2, max_completion_tokens=max_tokens)
+        return openai.LLM(model=spec["model"], temperature=TEMPERATURE, max_completion_tokens=max_tokens)
     return None
 
 
@@ -96,9 +97,16 @@ def build_stack(cfg: AgentConfig) -> dict:
     lang = cfg.language
     return {
         "stt": _chain(stt.FallbackAdapter, [_stt(cfg.stt["primary"], lang), _stt(cfg.stt["fallback"], lang)], "STT"),
-        "llm": _chain(llm.FallbackAdapter,
+        # attempt_timeout 4 s (library default 5 s; 2.5 s caused needless failovers under load, see D-050)
+        "llm": _chain(lambda items: llm.FallbackAdapter(items, attempt_timeout=4.0),
                       [_llm(cfg.llm[k], cfg.llm.get("max_tokens", 200))
                        for k in ("primary", "fallback", "fallback2") if k in cfg.llm], "LLM"),
         "tts": _chain(tts.FallbackAdapter, [_tts(cfg.voice["tts_primary"], lang),
                                             _tts(cfg.voice["tts_fallback"], lang)], "TTS"),
     }
+
+
+def build_llm(cfg: AgentConfig):
+    """Just the model chain (with its backups). Used by test conversations, which have no audio."""
+    return _chain(lambda items: llm.FallbackAdapter(items, attempt_timeout=4.0),
+                  [_llm(cfg.llm[k], cfg.llm.get("max_tokens", 200)) for k in ("primary", "fallback", "fallback2") if k in cfg.llm], "LLM")

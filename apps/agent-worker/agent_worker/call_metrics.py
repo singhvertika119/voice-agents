@@ -44,7 +44,7 @@ class CallMetricsLog:
                 self._turns[-1]["ttft"] = m.ttft
             self.totals["llm_in"] += m.prompt_tokens
             self.totals["llm_out"] += m.completion_tokens
-            self._write({"event": "llm", "ttft_s": round(m.ttft, 3), "prompt_tokens": m.prompt_tokens,
+            self._write({"event": "llm", "provider": getattr(m, "label", ""), "model": (m.metadata.model_name if getattr(m, "metadata", None) else ""), "ttft_s": round(m.ttft, 3), "prompt_tokens": m.prompt_tokens,
                          "completion_tokens": m.completion_tokens, "reasoning_tokens": m.reasoning_tokens})
         elif isinstance(m, metrics.TTSMetrics):
             if self._turns and "ttfb" not in self._turns[-1] and "ttft" in self._turns[-1]:
@@ -52,10 +52,10 @@ class CallMetricsLog:
                 t = self._turns[-1]
                 self._write({"event": "reply", "reply_s": round(t["eou"] + t["ttft"] + m.ttfb, 3)})
             self.totals["tts_chars"] += m.characters_count
-            self._write({"event": "tts", "ttfb_s": round(m.ttfb, 3), "chars": m.characters_count})
+            self._write({"event": "tts", "provider": getattr(m, "label", ""), "ttfb_s": round(m.ttfb, 3), "chars": m.characters_count})
         elif isinstance(m, metrics.STTMetrics):
             self.totals["stt_sec"] += m.audio_duration
-            self._write({"event": "stt", "audio_s": round(m.audio_duration, 2)})
+            self._write({"event": "stt", "provider": getattr(m, "label", ""), "audio_s": round(m.audio_duration, 2)})
 
     def reply_times(self) -> list[float]:
         """Per caller turn: end-of-utterance delay + LLM first token + voice first byte, in seconds."""

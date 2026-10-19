@@ -2877,6 +2877,7 @@ name = "voice-platform"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "datasets" },
     { name = "httpx" },
     { name = "jiwer" },
@@ -2901,6 +2902,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=50.0.2" },
     { name = "datasets" },
     { name = "httpx" },
     { name = "jiwer" },

@@ -60,29 +60,37 @@ async def fetch_published(agent_id: str) -> dict:
         return {"agent": agent, "version": agent["published_version"], "config": r.json()[0]["config"]}
 
 
-async def start_call(tenant_id: str, agent_id: str, version: int, room: str) -> str | None:
-    try:
-        async with _client() as c:
-            r = await c.post("/calls", json={"tenant_id": tenant_id, "agent_id": agent_id,
-                                             "agent_version": version, "livekit_room": room})
-            r.raise_for_status()
-            return r.json()[0]["id"]
-    except Exception as e:  # a database problem must never stop a call (architecture: call path survives DB outage)
-        log.warning("could not record call start: %s", e)
-        return None
+async def start_call(tenant_id: str, agent_id: str, version: int, room: str, caller_number: str | None = None,
+                     consent: dict | None = None) -> str | None:
+    base = {"tenant_id": tenant_id, "agent_id": agent_id, "agent_version": version, "livekit_room": room}
+    full = {**base, "caller_number": caller_number, "consent": consent, "channel": "phone" if caller_number else "web"}
+    for row in (full, base):   # the second form works on a database that has not had the newest update applied yet
+        try:
+            async with _client() as c:
+                r = await c.post("/calls", json=row)
+                r.raise_for_status()
+                return r.json()[0]["id"]
+        except Exception as e:  # a database problem must never stop a call (architecture: call path survives DB outage)
+            log.warning("could not record call start (%s)", e)
+    return None
+
+
+_OLD_COLUMNS = ("ended_at", "duration_s", "avg_reply_ms", "cost_usd", "cost_breakdown", "language", "outcome", "summary")
 
 
 async def finish_call(call_id: str | None, tenant_id: str, fields: dict, turns: list[dict]) -> None:
     if not call_id:
         return
-    try:
-        async with _client() as c:
-            (await c.patch("/calls", params={"id": f"eq.{call_id}"}, json=fields)).raise_for_status()
-            if turns:
-                rows = [{**t, "call_id": call_id, "tenant_id": tenant_id} for t in turns]
-                (await c.post("/call_turns", json=rows)).raise_for_status()
-    except Exception as e:
-        log.warning("could not save call %s: %s", call_id, e)
+    for payload in (fields, {k: v for k, v in fields.items() if k in _OLD_COLUMNS}):
+        try:
+            async with _client() as c:
+                (await c.patch("/calls", params={"id": f"eq.{call_id}"}, json=payload)).raise_for_status()
+                if turns:
+                    rows = [{**t, "call_id": call_id, "tenant_id": tenant_id} for t in turns]
+                    (await c.post("/call_turns", json=rows)).raise_for_status()
+            return
+        except Exception as e:
+            log.warning("could not save call %s (%s)", call_id, e)
 
 
 async def add_turn(call_id: str | None, tenant_id: str, turn: dict) -> None:
@@ -94,3 +102,18 @@ async def add_turn(call_id: str | None, tenant_id: str, turn: dict) -> None:
             (await c.post("/call_turns", json={**turn, "call_id": call_id, "tenant_id": tenant_id})).raise_for_status()
     except Exception as e:
         log.warning("could not save turn %s of call %s: %s", turn.get("seq"), call_id, e)
+
+
+async def fetch_version(agent_id: str, version: int) -> dict:
+    """A specific version (used by test runs, which check the exact version a person is about to publish)."""
+    async with _client() as c:
+        r = await c.get("/agents", params={"id": f"eq.{agent_id}", "select": "id,name,tenant_id,published_version"})
+        r.raise_for_status()
+        if not r.json():
+            raise RuntimeError(f"Agent {agent_id} not found")
+        agent = r.json()[0]
+        r = await c.get("/agent_versions", params={"agent_id": f"eq.{agent_id}", "version": f"eq.{version}", "select": "version,config"})
+        r.raise_for_status()
+        if not r.json():
+            raise RuntimeError(f"Version {version} not found")
+        return {"agent": agent, "version": version, "config": r.json()[0]["config"]}

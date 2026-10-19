@@ -76,7 +76,7 @@ if key("GROQ_API_KEY", False):
     CANDIDATES["groq-gpt-oss-20b"] = lambda q: stream_openai_compat(
         _g, key("GROQ_API_KEY"), "openai/gpt-oss-20b", q, {"reasoning_effort": "low"})
 if key("OPENAI_API_KEY", False):
-    for _m in ("gpt-4.1-mini", "gpt-4o-mini"):
+    for _m in ("gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1-nano"):
         CANDIDATES[f"openai-{_m}"] = (lambda m: lambda q: stream_openai_compat(
             "https://api.openai.com/v1/chat/completions", key("OPENAI_API_KEY"), m, q, {"max_completion_tokens": 400}))(_m)
 if key("SARVAM_API_KEY", False):

@@ -28,9 +28,21 @@ async def reset_stuck() -> None:
             log.info("re-queued %d interrupted sources", len(r.json()))
 
 
+async def purge_loop() -> None:
+    """Hourly: delete transcripts older than each workspace's retention window (DPDP storage limitation)."""
+    while True:
+        try:
+            out = await supa.rpc("purge_expired", {})
+            log.info("retention purge: %s", out)
+        except Exception as e:  # the function arrives with migration 0005; until then there is nothing to do
+            log.info("retention purge skipped: %s", str(e)[:80])
+        await asyncio.sleep(3600)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     await reset_stuck()
+    asyncio.create_task(purge_loop())
     log.info("ingestion worker waiting for sources")
     while True:
         try:

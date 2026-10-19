@@ -12,11 +12,12 @@ export default async function Home() {
   ]);
   const total = calls?.length ?? 0;
   const resolved = calls?.filter((c) => c.outcome === "resolved").length ?? 0;
-  const handed = calls?.filter((c) => c.outcome === "handed_off").length ?? 0;
+  const handed = calls?.filter((c) => c.outcome === "handed_off" || c.outcome === "callback").length ?? 0;
   const replies = calls?.map((c) => c.avg_reply_ms).filter((x): x is number => x != null) ?? [];
   const avgReply = replies.length ? replies.reduce((a, b) => a + b, 0) / replies.length / 1000 : null;
   const spent = calls?.reduce((s, c) => s + Number(c.cost_usd ?? 0), 0) ?? 0;
   const needsLive = agents?.filter((a) => !a.published_version) ?? [];
+  const { count: waitingCallbacks } = await supabase.from("callbacks").select("id", { count: "exact", head: true }).eq("status", "open");
 
   return (
     <>
@@ -35,7 +36,14 @@ export default async function Home() {
       ) : (
         <Card>
           <CardHeader title="Needs your attention" />
-          {needsLive.length === 0 ? (
+          {!!waitingCallbacks && (
+            <div className="px-5 py-4 border-b border-line-subtle flex flex-col gap-1.5">
+              <span className="text-sm font-medium flex items-center gap-2"><span className="size-2 rounded-full bg-warning-dot" aria-hidden /> {waitingCallbacks} callback request{waitingCallbacks === 1 ? "" : "s"} waiting</span>
+              <span className="text-[13px] text-ink-muted">Callers asked for your team to call them back.</span>
+              <Link href="/callbacks" className="text-sm text-ink-secondary hover:text-ink underline w-fit">See who to call</Link>
+            </div>
+          )}
+          {needsLive.length === 0 && !waitingCallbacks ? (
             <p className="px-5 py-4 text-sm text-ink-muted">Nothing needs attention right now.</p>
           ) : (
             needsLive.map((a) => (

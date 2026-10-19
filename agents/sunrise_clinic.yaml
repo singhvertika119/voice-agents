@@ -23,7 +23,7 @@ stt:
   primary: {provider: sarvam, model: "saaras:v3", mode: codemix}
   fallback: {provider: deepgram, model: nova-3}
 llm:
-  primary: {provider: openai, model: gpt-4.1-mini}
+  primary: {provider: openai, model: gpt-4o-mini}
   fallback: {provider: groq, model: openai/gpt-oss-20b, reasoning_effort: low}
   fallback2: {provider: gemini, model: gemini-2.5-flash}
   max_tokens: 200

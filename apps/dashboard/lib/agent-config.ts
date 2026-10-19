@@ -5,6 +5,7 @@ export type AgentConfig = {
   instructions: string;
   knowledge: string;            // free-text notes added to the prompt
   knowledge_sources?: string[]; // ids of uploaded sources (knowledge_sources.id), pinned per version
+  tool_ids?: string[];          // custom tools (tools.id) this agent may use, pinned per version
   voice: { tts_primary: Record<string, string>; tts_fallback: Record<string, string> };
   stt: { primary: Record<string, string>; fallback: Record<string, string> };
   llm: Record<string, unknown>;
@@ -35,7 +36,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
     fallback: { provider: "deepgram", model: "nova-3" },
   },
   llm: {
-    primary: { provider: "openai", model: "gpt-4.1-mini" },
+    primary: { provider: "openai", model: "gpt-4o-mini" },
     fallback: { provider: "groq", model: "openai/gpt-oss-20b", reasoning_effort: "low" },
     fallback2: { provider: "gemini", model: "gemini-2.5-flash" },
     max_tokens: 200,

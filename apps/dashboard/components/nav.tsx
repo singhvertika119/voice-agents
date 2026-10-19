@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AudioLines, ChartColumn, House, Phone, Settings, BookOpen, User, Ellipsis } from "lucide-react";
+import { AudioLines, ChartColumn, House, Phone, PhoneCall, Settings, BookOpen, User, Ellipsis, Wrench } from "lucide-react";
 
 const items = [
   { href: "/", label: "Home", icon: House },
   { href: "/agents", label: "Agents", icon: AudioLines },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/calls", label: "Calls", icon: Phone },
+  { href: "/callbacks", label: "Callbacks", icon: PhoneCall },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
-// TODO(design): Contacts, Analytics, Settings routes are built when the feature exists (DESIGN.md section 7).
+// TODO(design): Contacts and Analytics routes are built when the feature exists (DESIGN.md section 7).
 const soon = [
   { label: "Contacts", icon: User },
   { label: "Analytics", icon: ChartColumn },
-  { label: "Settings", icon: Settings },
 ];
 
 function isCurrent(path: string, href: string) {
@@ -70,7 +72,7 @@ export function SideNav({ email }: { email: string }) {
 export function MobileTabBar() {
   const path = usePathname();
   // DESIGN.md 6: Home, Calls, Agents, More
-  const tabs = [items[0], items[3], items[1], { href: "/knowledge", label: "More", icon: Ellipsis }];
+  const tabs = [items[0], items[4], items[1], { href: "/settings", label: "More", icon: Ellipsis }];
   return (
     <nav aria-label="Main" className="md:hidden fixed bottom-0 inset-x-0 h-16 bg-card border-t border-line grid grid-cols-4">
       {tabs.map(({ href, label, icon: Icon }, i) => (

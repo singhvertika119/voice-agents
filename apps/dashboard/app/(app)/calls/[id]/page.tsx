@@ -11,6 +11,8 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
   if (!call) notFound();
   const { data: turns } = await supabase.from("call_turns").select("seq,speaker,text,at_ms,latency_ms").eq("call_id", id).order("seq");
   const agent = call.agents as { name: string } | null;
+  const st = call.structured as { intent?: string; commitments?: string[]; open_items?: string[] } | null;
+  const tools = (call.tool_calls ?? []) as { tool: string; ok: boolean; ms: number }[];
   const facts: [string, string][] = [
     ["Agent version", `v${call.agent_version}`],
     ["Language", call.language ?? "-"],
@@ -25,7 +27,7 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
         <p className="text-[13px] text-ink-muted"><Link href="/calls" className="hover:text-ink">Calls</Link> / {time(call.started_at)}</p>
         <div className="flex flex-wrap items-center gap-3 mt-1">
           <h1 className="text-xl font-semibold">{agent?.name}</h1>
-          {call.outcome && <Badge tone={call.outcome === "resolved" ? "success" : call.outcome === "dropped" ? "danger" : "warning"}>{call.outcome.replace("_", " ")}</Badge>}
+          {call.outcome && <Badge tone={call.outcome === "resolved" ? "success" : call.outcome === "dropped" ? "danger" : "warning"}>{({ resolved: "Resolved", handed_off: "Handed off", callback: "Callback booked", dropped: "Dropped" } as Record<string, string>)[call.outcome] ?? call.outcome}</Badge>}
         </div>
       </div>
 
@@ -53,7 +55,27 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
           <Card className="p-5">
             <h2 className="text-base font-semibold mb-2">Summary</h2>
             <p className="text-sm leading-[1.55] text-ink-secondary">{call.summary ?? "A summary appears here after the call is processed."}</p>
+            {st && (
+              <dl className="mt-4 flex flex-col gap-3 text-sm">
+                {st.intent && <div><dt className="text-xs font-medium text-ink-muted">Wanted</dt><dd>{st.intent}</dd></div>}
+                {!!st.commitments?.length && <div><dt className="text-xs font-medium text-ink-muted">Promised</dt><dd>{st.commitments.join("; ")}</dd></div>}
+                {!!st.open_items?.length && <div><dt className="text-xs font-medium text-ink-muted">Still open</dt><dd>{st.open_items.join("; ")}</dd></div>}
+              </dl>
+            )}
           </Card>
+          {tools.length > 0 && (
+            <Card className="p-5">
+              <h2 className="text-base font-semibold mb-3">What the agent did</h2>
+              <ul className="flex flex-col gap-2 text-sm">
+                {tools.map((t, i) => (
+                  <li key={i} className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-[13px]">{t.tool}</span>
+                    <span className="flex items-center gap-2"><Badge tone={t.ok ? "success" : "danger"}>{t.ok ? "Worked" : "Failed"}</Badge><span className="font-mono text-xs text-ink-muted">{t.ms} ms</span></span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           <Card className="p-5">
             <h2 className="text-base font-semibold mb-3">Call facts</h2>
             <dl className="flex flex-col gap-2 text-sm">

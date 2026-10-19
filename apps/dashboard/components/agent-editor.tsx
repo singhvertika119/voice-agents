@@ -8,19 +8,22 @@ import { VOICES, findPlaceholders, type AgentConfig } from "@/lib/agent-config";
 import { saveDraft, type SaveState } from "@/app/(app)/agents/actions";
 
 export type SourceOption = { id: string; name: string; status: string; chunks: number };
-type Tab = "instructions" | "voice" | "knowledge";
+export type ToolOption = { id: string; name: string; description: string; enabled: boolean; requires_confirmation: boolean };
+type Tab = "instructions" | "voice" | "knowledge" | "tools";
 const TABS: { id: Tab; label: string }[] = [
   { id: "instructions", label: "Instructions" },
   { id: "voice", label: "Voice" },
   { id: "knowledge", label: "Knowledge" },
+  { id: "tools", label: "Tools" },
 ];
 
 // One form for all editing tabs, so switching tabs never throws away what you typed.
-export function AgentEditor({ agentId, cfg, sources, initialTab }: { agentId: string; cfg: AgentConfig; sources: SourceOption[]; initialTab: Tab }) {
+export function AgentEditor({ agentId, cfg, sources, tools, initialTab }: { agentId: string; cfg: AgentConfig; sources: SourceOption[]; tools: ToolOption[]; initialTab: Tab }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [state, action, pending] = useActionState<SaveState, FormData>(saveDraft.bind(null, agentId), null);
   const [text, setText] = useState({ greeting: cfg.greeting, instructions: cfg.instructions, knowledge: cfg.knowledge });
   const [picked, setPicked] = useState<string[]>(cfg.knowledge_sources ?? []);
+  const [pickedTools, setPickedTools] = useState<string[]>(cfg.tool_ids ?? []);
   const placeholders = findPlaceholders(text);
   const show = (t: Tab) => (tab === t ? "" : "hidden");
 
@@ -40,6 +43,7 @@ export function AgentEditor({ agentId, cfg, sources, initialTab }: { agentId: st
           </button>
         ))}
         <Link href={`/agents/${agentId}?tab=versions`} className="h-10 px-3 text-sm text-ink-muted inline-flex items-center">Versions</Link>
+        <Link href={`/agents/${agentId}?tab=tests`} className="h-10 px-3 text-sm text-ink-muted inline-flex items-center">Tests</Link>
       </div>
 
       {placeholders.length > 0 && (
@@ -102,6 +106,36 @@ export function AgentEditor({ agentId, cfg, sources, initialTab }: { agentId: st
           <Field label="Extra notes" helper="Short facts that do not belong in a document: timings, prices, policies. Added to every answer.">
             <textarea name="knowledge" rows={8} value={text.knowledge} onChange={(e) => setText({ ...text, knowledge: e.target.value })} className={textareaCls} />
           </Field>
+        </Card>
+      </div>
+
+      <div className={`flex flex-col gap-4 ${show("tools")}`}>
+        <Card className="p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-base font-semibold">Tools this agent can use</h2>
+            <p className="text-[13px] text-ink-muted">Every agent can already ask for a person, book a callback and end the call. Tick extra actions in your own systems. <Link href="/tools" className="underline">Add or test tools</Link></p>
+          </div>
+          <input type="hidden" name="tools_present" value="1" />
+          {tools.length === 0 ? (
+            <p className="text-sm text-ink-muted">No tools added yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {tools.map((t) => (
+                <li key={t.id} className="flex items-start gap-3 text-sm leading-snug">
+                  <input
+                    type="checkbox" name="tool" value={t.id} id={`tool-${t.id}`} disabled={!t.enabled}
+                    checked={pickedTools.includes(t.id)}
+                    onChange={(e) => setPickedTools(e.target.checked ? [...pickedTools, t.id] : pickedTools.filter((x) => x !== t.id))}
+                    className="mt-0.5 size-4 accent-ink"
+                  />
+                  <label htmlFor={`tool-${t.id}`} className="flex flex-col gap-0.5">
+                    <span className="font-medium flex flex-wrap items-center gap-2"><span className="font-mono">{t.name}</span>{t.requires_confirmation && <Badge tone="warning">Asks to confirm</Badge>}{!t.enabled && <Badge>Off</Badge>}</span>
+                    <span className="text-[13px] text-ink-muted">{t.description}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </div>
 
