@@ -32,7 +32,7 @@ export default async function Home() {
       </div>
 
       {!agents?.length ? (
-        <EmptyState text="No agents yet. Create an agent to start answering calls." action={<ButtonLink href="/agents">Create an agent</ButtonLink>} />
+        <EmptyState text="No agents yet. The setup guide takes you from your business details to a working agent in about 15 minutes." action={<ButtonLink href="/onboarding/business-type">Set up your first agent</ButtonLink>} />
       ) : (
         <Card>
           <CardHeader title="Needs your attention" />

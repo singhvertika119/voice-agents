@@ -24,10 +24,10 @@ export default async function AgentBuilder({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; error?: string }>;
+  searchParams: Promise<{ tab?: string; error?: string; live?: string }>;
 }) {
   const { id } = await params;
-  const { tab = "instructions", error } = await searchParams;
+  const { tab = "instructions", error, live } = await searchParams;
   const supabase = await supabaseServer();
   const { data: agent } = await supabase.from("agents").select("id,name,published_version,enabled").eq("id", id).single();
   if (!agent) notFound();
@@ -83,6 +83,9 @@ export default async function AgentBuilder({
       <div className="flex flex-wrap gap-6 items-start">
         <div className="flex-[999_1_480px] min-w-0 flex flex-col gap-4">
           {error && <p role="alert" className="text-[13px] text-danger-fg">{error}</p>}
+          {live && !error && (
+            <p role="status" className="px-3 py-2 rounded-md bg-success-bg text-success-fg text-[13px]">Your agent is live. New calls now use this version. Phone numbers are connected separately; until then, test it from the panel on the right.</p>
+          )}
 
           {!["versions", "tests"].includes(tab) && cfg && <AgentEditor agentId={id} cfg={cfg} sources={sources} tools={tools} initialTab={editing} />}
 

@@ -28,12 +28,35 @@ async def reset_stuck() -> None:
             log.info("re-queued %d interrupted sources", len(r.json()))
 
 
+async def purge_recordings() -> int:
+    """Delete audio files older than each workspace's retention window (same window as transcripts), then forget the
+    path. The database function cannot remove storage files, so this part lives here (docs/decision.md D-068)."""
+    from datetime import datetime, timedelta, timezone
+    settings = {r["tenant_id"]: r["retention_days"] for r in await supa.select("tenant_settings", select="tenant_id,retention_days")}
+    rows = await supa.select("calls", select="id,tenant_id,recording_path,started_at", recording_path="not.is.null", limit="500")
+    now, gone = datetime.now(timezone.utc), 0
+    by_tenant: dict[str, list[dict]] = {}
+    for r in rows:
+        days = settings.get(r["tenant_id"], 90)
+        if datetime.fromisoformat(r["started_at"]) < now - timedelta(days=days):
+            by_tenant.setdefault(r["tenant_id"], []).append(r)
+    for rs in by_tenant.values():
+        await supa.remove("recordings", [r["recording_path"] for r in rs])
+        for r in rs:
+            await supa.update("calls", {"id": r["id"]}, {"recording_path": None})
+            gone += 1
+    return gone
+
+
 async def purge_loop() -> None:
     """Hourly: delete transcripts older than each workspace's retention window (DPDP storage limitation)."""
     while True:
         try:
             out = await supa.rpc("purge_expired", {})
             log.info("retention purge: %s", out)
+            n = await purge_recordings()
+            if n:
+                log.info("retention purge removed %d recordings", n)
         except Exception as e:  # the function arrives with migration 0005; until then there is nothing to do
             log.info("retention purge skipped: %s", str(e)[:80])
         await asyncio.sleep(3600)

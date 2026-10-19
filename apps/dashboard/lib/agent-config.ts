@@ -6,6 +6,7 @@ export type AgentConfig = {
   knowledge: string;            // free-text notes added to the prompt
   knowledge_sources?: string[]; // ids of uploaded sources (knowledge_sources.id), pinned per version
   tool_ids?: string[];          // custom tools (tools.id) this agent may use, pinned per version
+  wizard?: { type: string; details?: { name: string; address: string; hours: string; reasons: string; languages: string[] } }; // setup wizard answers, ignored by the worker
   voice: { tts_primary: Record<string, string>; tts_fallback: Record<string, string> };
   stt: { primary: Record<string, string>; fallback: Record<string, string> };
   llm: Record<string, unknown>;

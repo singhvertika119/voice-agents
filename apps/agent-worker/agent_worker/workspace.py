@@ -13,7 +13,8 @@ from .tools import DEFAULT_HOURS, Backend, CallState
 log = logging.getLogger("platform")
 
 DEFAULT_SETTINGS = {"retention_days": 90, "max_concurrent_calls": 5, "business_hours": DEFAULT_HOURS,
-                    "handoff_phone": None, "require_tests_to_publish": False, "memory_enabled": True}
+                    "handoff_phone": None, "require_tests_to_publish": False, "memory_enabled": True,
+                    "record_calls": True}
 STALE_CALL_MINUTES = 30   # a call row with no end time older than this is a crash, not a live call
 
 

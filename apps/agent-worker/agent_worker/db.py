@@ -76,12 +76,13 @@ async def start_call(tenant_id: str, agent_id: str, version: int, room: str, cal
 
 
 _OLD_COLUMNS = ("ended_at", "duration_s", "avg_reply_ms", "cost_usd", "cost_breakdown", "language", "outcome", "summary")
+_RECORDING_COLUMNS = _OLD_COLUMNS + ("structured", "consent", "contact_id", "tool_calls")   # without the 0006 columns
 
 
 async def finish_call(call_id: str | None, tenant_id: str, fields: dict, turns: list[dict]) -> None:
     if not call_id:
         return
-    for payload in (fields, {k: v for k, v in fields.items() if k in _OLD_COLUMNS}):
+    for payload in (fields, {k: v for k, v in fields.items() if k in _RECORDING_COLUMNS}, {k: v for k, v in fields.items() if k in _OLD_COLUMNS}):
         try:
             async with _client() as c:
                 (await c.patch("/calls", params={"id": f"eq.{call_id}"}, json=payload)).raise_for_status()

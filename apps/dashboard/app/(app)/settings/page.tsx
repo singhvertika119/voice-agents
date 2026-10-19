@@ -14,6 +14,7 @@ export default async function SettingsPage() {
     max_concurrent_calls: s?.max_concurrent_calls ?? 5,
     memory_enabled: s?.memory_enabled ?? true,
     require_tests: s?.require_tests_to_publish ?? false,
+    record_calls: s?.record_calls ?? true,
   };
   const canEdit = ["owner", "admin"].includes(member?.role ?? "");
   return (

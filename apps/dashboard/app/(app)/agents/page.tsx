@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
-import { Badge, Button, Card, CardHeader, EmptyState, Field, PageHeader, inputCls } from "@/components/ui";
+import { Badge, Button, ButtonLink, Card, CardHeader, EmptyState, Field, PageHeader, inputCls } from "@/components/ui";
 import { time } from "@/lib/format";
 import { createAgent } from "./actions";
 
@@ -14,7 +14,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <PageHeader title="Agents" intro="Each agent answers calls on its own, with its own voice and knowledge." />
+      <PageHeader title="Agents" intro="Each agent answers calls on its own, with its own voice and knowledge." action={<ButtonLink href="/onboarding/business-type" variant="secondary">Guided setup</ButtonLink>} />
       {error && <p role="alert" className="text-[13px] text-danger-fg">{error}</p>}
 
       <Card className="p-5">

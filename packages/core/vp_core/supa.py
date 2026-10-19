@@ -62,3 +62,19 @@ async def download(bucket: str, path: str) -> bytes:
             raise FileNotFoundError(path)
         r.raise_for_status()
         return r.content
+
+
+async def upload(bucket: str, path: str, data: bytes, content_type: str) -> None:
+    """Create or replace one object. Service key only: callers must have checked the workspace themselves."""
+    async with client(120) as c:
+        r = await c.post(f"/storage/v1/object/{bucket}/{path}", content=data,
+                         headers={"Content-Type": content_type, "x-upsert": "true"})
+        r.raise_for_status()
+
+
+async def remove(bucket: str, paths: list[str]) -> None:
+    if not paths:
+        return
+    async with client(60) as c:
+        r = await c.request("DELETE", f"/storage/v1/object/{bucket}", json={"prefixes": paths})
+        r.raise_for_status()

@@ -25,6 +25,7 @@ from .custom_tools import load_custom_tools
 from .knowledge import KnowledgeBase, load_knowledge
 from .pii import redact
 from .providers import build_stack, probe_providers
+from .recording import CallRecorder
 from .tools import CallState, RecordingBackend, builtin_tools, normalize_phone
 from .voice_agent import VoiceAgent, build_instructions
 
@@ -88,7 +89,7 @@ async def entrypoint(ctx: JobContext):
         elif await workspace.degraded_mode():
             mode = "degraded"
     consent = {"notice": "ai_disclosure_and_recording_notice", "version": CONSENT_NOTICE_VERSION,
-               "at": datetime.now(timezone.utc).isoformat(), "recording_stored": False, "memory": bool(settings.get("memory_enabled"))}
+               "at": datetime.now(timezone.utc).isoformat(), "recording_stored": bool(settings.get("record_calls", True)), "memory": bool(settings.get("memory_enabled"))}
     if tenant_id:
         call_row = await db.start_call(tenant_id, agent_ref, version, ctx.room.name, caller_number, consent)
         if mode == "normal" and await workspace.active_calls(tenant_id, call_row) >= int(settings["max_concurrent_calls"]):
@@ -116,6 +117,8 @@ async def entrypoint(ctx: JobContext):
             log.warning("prewarm failed: %s", e)
     session = AgentSession(vad=ctx.proc.userdata["vad"], turn_detection=_turn_detector(cfg), min_endpointing_delay=0.3, **stack)
     agent = VoiceAgent(cfg, kb, tools=tools, memory_block=memory_block, extra_rules=extra_rules)
+    want_recording = bool(tenant_id and mode == "normal" and settings.get("record_calls", True))
+    recorder = CallRecorder(session, REPO_ROOT / "logs" / "recordings", f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}") if want_recording else None
 
     call_id = f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}"
     mlog = CallMetricsLog(REPO_ROOT / "logs", call_id, cfg.id)
@@ -182,6 +185,11 @@ async def entrypoint(ctx: JobContext):
                 if use_memory and rolling:
                     await workspace.save_memory(tenant_id, agent_ref, contact_id, rolling, s.get("facts") or {},
                                                 [str(x) for x in (s.get("open_items") or [])], {"hindi": "hi", "english": "en"}.get(s.get("language") or "", None))
+        if recorder:
+            stored = await recorder.finish(tenant_id, call_row)
+            if stored:
+                fields["recording_path"], fields["recording_seconds"] = stored
+            fields["consent"] = {**consent, "recording_stored": bool(stored)}
         await db.finish_call(call_row, tenant_id, fields, [])
 
     async def _warm_llm():
@@ -203,6 +211,8 @@ async def entrypoint(ctx: JobContext):
         warm_task.add_done_callback(tasks.discard)
     ctx.add_shutdown_callback(_finish)
     await session.start(agent=agent, room=ctx.room)
+    if recorder and await recorder.attach() and recorder.started_at:
+        t_start = recorder.started_at   # transcript times now line up with the audio, so a click on a line can seek to it
     if mode in ("full", "disabled"):
         await _speak_and_hang_up(session, greeting)
         return

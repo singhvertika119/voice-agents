@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, Card, CardHeader } from "@/components/ui";
 import { duration, inr, time } from "@/lib/format";
+import { createClient } from "@supabase/supabase-js";
+import { CallReview } from "@/components/call-review";
 
 export default async function CallDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -11,12 +13,21 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
   if (!call) notFound();
   const { data: turns } = await supabase.from("call_turns").select("seq,speaker,text,at_ms,latency_ms").eq("call_id", id).order("seq");
   const agent = call.agents as { name: string } | null;
+  // The call row was read as the signed-in user, so row-level security already proved they may see this call.
+  // The link works for 10 minutes and only for this one file.
+  let audioUrl: string | null = null;
+  if (call.recording_path) {
+    const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+    const { data: signed } = await admin.storage.from("recordings").createSignedUrl(call.recording_path, 600);
+    audioUrl = signed?.signedUrl ?? null;
+  }
   const st = call.structured as { intent?: string; commitments?: string[]; open_items?: string[] } | null;
   const tools = (call.tool_calls ?? []) as { tool: string; ok: boolean; ms: number }[];
   const facts: [string, string][] = [
     ["Agent version", `v${call.agent_version}`],
     ["Language", call.language ?? "-"],
     ["Duration", duration(call.duration_s)],
+    ["Recording", call.recording_path ? "Saved" : call.consent?.recording_stored === false ? "Not recorded" : "None"],
     ["Average reply time", call.avg_reply_ms ? `${(call.avg_reply_ms / 1000).toFixed(1)} s` : "-"],
     ["Cost", inr(call.cost_usd)],
   ];
@@ -32,24 +43,7 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
       </div>
 
       <div className="flex flex-wrap gap-6 items-start">
-        <Card className="flex-[999_1_480px] min-w-0">
-          <CardHeader title="Transcript" />
-          <div className="p-5 flex flex-col gap-4" aria-live="polite">
-            {!turns?.length && <p className="text-sm text-ink-muted">No transcript was saved for this call.</p>}
-            {turns?.map((t) => (
-              <div key={t.seq} className="flex gap-3">
-                <span className="w-11 shrink-0 font-mono text-xs text-ink-muted pt-1">{duration((t.at_ms ?? 0) / 1000)}</span>
-                <div className={`flex-1 flex flex-col gap-1 ${t.speaker === "caller" ? "items-end" : ""}`}>
-                  <span className="text-xs font-medium text-ink-muted">{t.speaker === "caller" ? "Caller" : "Agent"}</span>
-                  <p className={`text-sm leading-[1.55] ${t.speaker === "caller" ? "px-3.5 py-2.5 rounded-lg bg-muted" : ""}`}>{t.text}</p>
-                  {t.speaker === "agent" && t.latency_ms != null && (
-                    <span className="px-2 py-[3px] rounded-sm border border-line text-xs text-ink-secondary font-mono w-fit">{(t.latency_ms / 1000).toFixed(1)} s</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+        <CallReview turns={turns ?? []} audioUrl={audioUrl} seconds={call.recording_seconds ?? call.duration_s ?? 0} />
 
         <div className="flex-[1_1_320px] min-w-0 flex flex-col gap-4">
           <Card className="p-5">

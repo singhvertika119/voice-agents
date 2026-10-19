@@ -7,7 +7,7 @@ import { eraseCaller, saveSettings, type FormState } from "@/app/(app)/settings/
 
 export type SettingsValues = {
   days: number[]; start: string; end: string; handoff_phone: string; retention_days: number;
-  max_concurrent_calls: number; memory_enabled: boolean; require_tests: boolean;
+  max_concurrent_calls: number; memory_enabled: boolean; require_tests: boolean; record_calls: boolean;
 };
 const DAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [7, "Sun"]] as const;
 
@@ -71,6 +71,13 @@ export function SettingsForm({ v, canEdit }: { v: SettingsValues; canEdit: boole
         <Field label="Keep transcripts for (days)" helper="Older transcripts are deleted automatically. Summaries stay.">
           <input type="number" name="retention_days" min={1} max={3650} defaultValue={v.retention_days} disabled={!canEdit} className={`${inputCls} w-32 font-mono`} />
         </Field>
+        <label className="flex items-start gap-3 text-sm leading-snug">
+          <input type="checkbox" name="record_calls" defaultChecked={v.record_calls} disabled={!canEdit} className="mt-0.5 size-4 accent-ink" />
+          <span>
+            <span className="font-medium">Record calls</span><br />
+            <span className="text-[13px] text-ink-muted">Audio is kept in your private storage for the same number of days as transcripts, and only your team can play it. Callers are told at the start of every call that it may be recorded.</span>
+          </span>
+        </label>
         <label className="flex items-start gap-3 text-sm leading-snug">
           <input type="checkbox" name="memory_enabled" defaultChecked={v.memory_enabled} disabled={!canEdit} className="mt-0.5 size-4 accent-ink" />
           <span>
