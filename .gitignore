@@ -1,0 +1,49 @@
+# ---------- Secrets (never commit) ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------- Project docs (kept local on purpose) ----------
+docs/
+
+# ---------- Generated at run time ----------
+logs/
+benchmark/data/
+benchmark/results/
+
+# ---------- Python ----------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.coverage
+htmlcov/
+# LiveKit / Hugging Face model files downloaded at run time
+.cache/
+
+# ---------- Node / Next.js (dashboard) ----------
+node_modules/
+apps/dashboard/.next/
+apps/dashboard/out/
+apps/dashboard/build/
+apps/dashboard/next-env.d.ts
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ---------- Editors, OS, tools ----------
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+*.swp
+*.log
+*.tmp

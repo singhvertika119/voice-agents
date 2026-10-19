@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/* Tokens from docs/DESIGN.md section 4. Components use these names only; no raw hex or palette classes. */
+@theme {
+  --color-page: #f7f7f8;
+  --color-card: #ffffff;
+  --color-muted: #f4f4f5;
+  --color-subtle: #fafafa;
+  --color-segmented: #ededef;
+
+  --color-ink: #18181b;
+  --color-ink-secondary: #3f3f46;
+  --color-ink-muted: #52525b;
+  --color-ink-faint: #71717a;
+  --color-on-ink: #ffffff;
+
+  --color-line: #e4e4e7;
+  --color-line-strong: #d4d4d8;
+  --color-line-subtle: #f0f0f1;
+  --color-line-dashed: #a1a1aa;
+
+  --color-success-bg: #f0fdf4;
+  --color-success-fg: #166534;
+  --color-success-dot: #16a34a;
+  --color-warning-bg: #fffbeb;
+  --color-warning-fg: #92400e;
+  --color-warning-dot: #d97706;
+  --color-danger-bg: #fef2f2;
+  --color-danger-fg: #991b1b;
+
+  --font-sans: var(--font-geist), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+
+  --shadow-segment: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+}
