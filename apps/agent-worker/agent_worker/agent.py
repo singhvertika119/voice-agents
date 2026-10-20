@@ -168,35 +168,57 @@ async def entrypoint(ctx: JobContext):
                 t.add_done_callback(tasks.discard)
 
     async def _finish():
+        """Runs after the caller has gone. LiveKit gives this only `shutdown_process_timeout` seconds (set below), so the
+        essentials are written FIRST and the slow extras (summary, memory, recording) are added afterwards. Before this
+        order a long call could be killed mid-way and stay "in progress" forever, with no summary and no recording."""
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         mlog.close()
         log.info("call %s cost ~$%.5f (list prices)", call_id, mlog.cost_usd())
+        spoke = any(t["speaker"] == "caller" for t in turns)
+        outcome = "dropped" if mode in ("full", "disabled") else state.outcome(spoke)
+        essentials = {"ended_at": datetime.now(timezone.utc).isoformat(), "duration_s": round(time.time() - t_start, 1),
+                      "avg_reply_ms": mlog.avg_reply_ms(), "cost_usd": round(mlog.cost_usd(), 6),
+                      "cost_breakdown": {**mlog.totals, "retrieval_ms": kb.retrieval_ms, "knowledge_mode": kb.mode, "mode": mode},
+                      "language": cfg.language, "outcome": outcome, "tool_calls": state.tool_log, "contact_id": contact_id}
+        await db.finish_call(call_row, tenant_id, essentials, [])
+
         conversation = [t for t in turns if t["seq"] > 0 or t["speaker"] == "caller"]   # skip the fixed greeting for summaries
-        outcome = "dropped" if mode in ("full", "disabled") else state.outcome(any(t["speaker"] == "caller" for t in turns))
-        fields = {"ended_at": datetime.now(timezone.utc).isoformat(), "duration_s": round(time.time() - t_start, 1),
-                  "avg_reply_ms": mlog.avg_reply_ms(), "cost_usd": round(mlog.cost_usd(), 6),
-                  "cost_breakdown": {**mlog.totals, "retrieval_ms": kb.retrieval_ms, "knowledge_mode": kb.mode, "mode": mode},
-                  "language": cfg.language, "outcome": outcome, "tool_calls": state.tool_log, "contact_id": contact_id}
-        if tenant_id and mode == "normal" and any(t["speaker"] == "caller" for t in turns):
+
+        async def summarise() -> dict:
+            if not (tenant_id and mode == "normal" and spoke):
+                return {}
             use_memory = bool(contact_id) and settings.get("memory_enabled", True)
             prior, facts = await workspace.previous_summary(contact_id, agent_ref) if use_memory else ("", {})
             s = await postcall.summarize(conversation, prior, facts, state.tool_log, with_memory=use_memory)
-            if s:
-                fields["summary"] = s.get("summary")
-                fields["structured"] = {k: s.get(k) for k in ("intent", "outcome", "commitments", "open_items", "language", "name")}
-                # Older models sometimes leave rolling_summary out. Never lose the call: fall back to the previous
-                # memory plus this call's summary, trimmed (found when a returning caller was not remembered).
-                rolling = s.get("rolling_summary") or " ".join(x for x in (prior, s.get("summary")) if x)[-1800:]
-                if use_memory and rolling:
-                    await workspace.save_memory(tenant_id, agent_ref, contact_id, rolling, s.get("facts") or {},
-                                                [str(x) for x in (s.get("open_items") or [])], {"hindi": "hi", "english": "en"}.get(s.get("language") or "", None))
-        if recorder:
+            if not s:
+                return {}
+            # Older models sometimes leave rolling_summary out. Never lose the call: fall back to the previous
+            # memory plus this call's summary, trimmed (found when a returning caller was not remembered).
+            rolling = s.get("rolling_summary") or " ".join(x for x in (prior, s.get("summary")) if x)[-1800:]
+            if use_memory and rolling:
+                await workspace.save_memory(tenant_id, agent_ref, contact_id, rolling, s.get("facts") or {},
+                                            [str(x) for x in (s.get("open_items") or [])], {"hindi": "hi", "english": "en"}.get(s.get("language") or "", None))
+            return {"summary": s.get("summary"),
+                    "structured": {k: s.get(k) for k in ("intent", "outcome", "commitments", "open_items", "language", "name")}}
+
+        async def keep_recording() -> dict:
+            if not recorder:
+                return {}
             stored = await recorder.finish(tenant_id, call_row)
+            extra = {"consent": {**consent, "recording_stored": bool(stored)}}
             if stored:
-                fields["recording_path"], fields["recording_seconds"] = stored
-            fields["consent"] = {**consent, "recording_stored": bool(stored)}
-        await db.finish_call(call_row, tenant_id, fields, [])
+                extra["recording_path"], extra["recording_seconds"] = stored
+            return extra
+
+        extras: dict = {}
+        for r in await asyncio.gather(summarise(), keep_recording(), return_exceptions=True):   # at the same time: the wait is the slower of the two
+            if isinstance(r, dict):
+                extras.update(r)
+            elif isinstance(r, Exception):
+                log.warning("end-of-call step failed: %s", r)
+        if extras:
+            await db.finish_call(call_row, tenant_id, extras, [])
 
     async def _warm_llm():
         """The first real LLM request is slow (new connection, empty prompt cache). Send the agent's actual
@@ -228,4 +250,5 @@ async def entrypoint(ctx: JobContext):
 if __name__ == "__main__":
     # A named worker only receives rooms that ask for it by name (the dashboard test panel does). An unnamed worker
     # is sent EVERY new room in the LiveKit project, including other apps' rooms (D-060).
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm, agent_name=os.getenv("AGENT_NAME", "voice-platform")))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm, agent_name=os.getenv("AGENT_NAME", "voice-platform"),
+                              shutdown_process_timeout=90.0))   # default is 10 s: too short for summary + recording upload (D-080)
