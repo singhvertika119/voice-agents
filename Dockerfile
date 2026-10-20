@@ -23,12 +23,15 @@ WORKDIR /app
 COPY --chown=agent pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=uv,target=/home/agent/.cache/uv,uid=10001 uv sync --frozen --no-default-groups --no-install-project
 
+# Run Python straight from the environment (LiveKit asks for a plain start command, not a wrapper).
+ENV PATH="/app/.venv/bin:$PATH"
+
 COPY --chown=agent apps/agent-worker apps/agent-worker
 COPY --chown=agent packages/core packages/core
 COPY --chown=agent agents agents
 
 # Download the turn-detection and voice-activity models now, so the first call does not wait for them.
-RUN uv run --no-sync python -m agent_worker.agent download-files
+RUN python -m agent_worker.agent download-files
 
 # "start" is production mode. A named worker only receives rooms that ask for it (docs/decision.md D-060).
-CMD ["uv", "run", "--no-sync", "python", "-m", "agent_worker.agent", "start"]
+CMD ["python", "-m", "agent_worker.agent", "start"]
