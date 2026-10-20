@@ -42,7 +42,7 @@ export default async function CallsPage() {
                   return (
                     <tr key={c.id}>
                       <td className="px-5 py-3.5 border-b border-line-subtle">
-                        <Link href={`/calls/${c.id}`} className="font-medium hover:underline">{time(c.started_at)}</Link>
+                        <Link href={`/calls/${c.id}`} className="font-medium hover:underline inline-flex items-center min-h-11">{time(c.started_at)}</Link>
                       </td>
                       <td className="px-3 py-3.5 border-b border-line-subtle">
                         {agent?.name}<div className="font-mono text-xs text-ink-muted">v{c.agent_version}</div>

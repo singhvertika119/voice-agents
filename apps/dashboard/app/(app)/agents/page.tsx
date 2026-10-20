@@ -46,7 +46,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
                 {agents.map((a) => (
                   <tr key={a.id}>
                     <td className="px-5 py-3.5 border-b border-line-subtle">
-                      <Link href={`/agents/${a.id}`} className="font-medium text-ink hover:underline">{a.name}</Link>
+                      <Link href={`/agents/${a.id}`} className="font-medium text-ink hover:underline inline-flex items-center min-h-11">{a.name}</Link>
                     </td>
                     <td className="px-3 py-3.5 border-b border-line-subtle">
                       {a.published_version ? <Badge tone="success">{`Live v${a.published_version}`}</Badge> : <Badge tone="warning">Draft</Badge>}

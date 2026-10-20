@@ -29,7 +29,7 @@ export function AgentEditor({ agentId, cfg, sources, tools, initialTab }: { agen
 
   return (
     <form action={action} className="flex flex-col gap-5">
-      <div className="flex gap-1 border-b border-line" role="tablist">
+      <div className="flex gap-1 border-b border-line overflow-x-auto whitespace-nowrap [&>*]:shrink-0" role="tablist">
         {TABS.map((t) => (
           <button
             key={t.id}

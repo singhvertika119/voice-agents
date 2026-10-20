@@ -40,7 +40,7 @@ export default async function Home() {
             <div className="px-5 py-4 border-b border-line-subtle flex flex-col gap-1.5">
               <span className="text-sm font-medium flex items-center gap-2"><span className="size-2 rounded-full bg-warning-dot" aria-hidden /> {waitingCallbacks} callback request{waitingCallbacks === 1 ? "" : "s"} waiting</span>
               <span className="text-[13px] text-ink-muted">Callers asked for your team to call them back.</span>
-              <Link href="/callbacks" className="text-sm text-ink-secondary hover:text-ink underline w-fit">See who to call</Link>
+              <Link href="/callbacks" className="text-sm text-ink-secondary hover:text-ink underline w-fit inline-flex items-center min-h-11">See who to call</Link>
             </div>
           )}
           {needsLive.length === 0 && !waitingCallbacks ? (
@@ -52,7 +52,7 @@ export default async function Home() {
                   <span className="size-2 rounded-full bg-warning-dot" aria-hidden /> {a.name} is not live yet <Badge tone="warning">Draft</Badge>
                 </span>
                 <span className="text-[13px] text-ink-muted">Publish a version so it can answer calls.</span>
-                <Link href={`/agents/${a.id}?tab=versions`} className="text-sm text-ink-secondary hover:text-ink underline w-fit">Review and publish</Link>
+                <Link href={`/agents/${a.id}?tab=versions`} className="text-sm text-ink-secondary hover:text-ink underline w-fit inline-flex items-center min-h-11">Review and publish</Link>
               </div>
             ))
           )}

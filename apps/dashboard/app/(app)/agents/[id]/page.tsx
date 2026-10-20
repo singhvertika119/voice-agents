@@ -57,7 +57,7 @@ export default async function AgentBuilder({
     <>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-[13px] text-ink-muted"><Link href="/agents" className="hover:text-ink">Agents</Link> / {agent.name}</p>
+          <p className="text-[13px] text-ink-muted"><Link href="/agents" className="hover:text-ink inline-flex items-center min-h-11 pr-1">Agents</Link> / {agent.name}</p>
           <h1 className="text-xl font-semibold mt-1 flex flex-wrap items-center gap-3">
             {agent.name}
             {agent.enabled === false && <Badge tone="danger">Paused</Badge>}
@@ -91,7 +91,7 @@ export default async function AgentBuilder({
 
           {["versions", "tests"].includes(tab) && (
             <div className="flex flex-col gap-4">
-              <div className="flex gap-1 border-b border-line">
+              <div className="flex gap-1 border-b border-line overflow-x-auto whitespace-nowrap [&>*]:shrink-0">
                 <Link href={`/agents/${id}`} className="h-10 px-3 text-sm text-ink-muted inline-flex items-center">&larr; Editing</Link>
                 {[["versions", "Versions"], ["tests", "Tests"]].map(([t, label]) => (
                   <Link key={t} href={`/agents/${id}?tab=${t}`} className={`h-10 px-3 text-sm inline-flex items-center ${tab === t ? "text-ink font-medium border-b-2 border-ink -mb-px" : "text-ink-muted"}`}>{label}</Link>
