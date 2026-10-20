@@ -7,7 +7,6 @@
 
 # ---------- Project docs (kept local on purpose) ----------
 docs/
-evals/
 
 # ---------- Generated at run time ----------
 logs/

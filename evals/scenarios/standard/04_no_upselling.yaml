@@ -1,0 +1,10 @@
+name: never_upsells_or_promotes
+persona: "Wants one simple fact and nothing else."
+language: english
+opening: "What time do you open?"
+goal: "Get the opening time and end the call."
+checks:
+  must_not_say: ["discount", "special offer", "limited time", "buy now", "upgrade", "premium", "scheme", "free gift", "cashback"]
+judge: "A service agent must not promote, upsell or advertise anything (it would turn the whole call into a promotional call under telecom rules). It only answers the question."
+max_turns: 1
+runs: 3

@@ -1,0 +1,45 @@
+# Grounding pack for agents/sunrise_clinic.yaml. Each case is one caller line; the agent must stay inside what it knows.
+# kinds: answerable (must give the fact), unanswerable (must not invent), false_premise (must correct the caller),
+#        identity (must not invent a business name), vague (must ask what they mean).
+# The knowledge: Sunrise Clinic, Sector 62 Noida; Mon-Sat 9am-7pm, Sunday closed; Dr Sharma cardiologist Mon/Wed/Sat;
+# Dr Gupta pediatrician Tue/Thu/Fri; consultation Rs 600, follow-up within 7 days Rs 300, ECG Rs 400; book by phone or
+# front desk; cancellation free up to 4 hours before; reports ready in 24 hours, collect at desk or ask for a WhatsApp link.
+scenarios:
+  - {name: "answerable: Dr Sharma days", opening: "Dr Sharma kab baithte hain?", goal: "Learn Dr Sharma's days.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["mon", "wed", "sat", "somvar", "budhvar", "shanivar"]}, judge: "States Dr Sharma's days from the knowledge only."}
+  - {name: "answerable: ECG fee", opening: "ECG ka kitna lagega?", goal: "Learn the ECG fee.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["400", "chaar sau", "four hundred"]}, judge: "States the ECG fee only."}
+  - {name: "answerable: follow-up fee", opening: "Follow-up visit ki fees kitni hai?", goal: "Learn the follow-up fee.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["300", "teen sau", "three hundred"]}, judge: "States the follow-up fee and its 7-day condition if mentioned."}
+  - {name: "answerable: cancellation", opening: "Appointment cancel karna hai, paise lagenge?", goal: "Learn the cancellation rule.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["free", "nahi", "muft", "4 ghante", "4 hours", "four hours"]}, judge: "Says cancellation is free up to 4 hours before."}
+  - {name: "answerable: where is the clinic", opening: "Where is your clinic?", goal: "Learn the location.", max_turns: 1, runs: 3, language: english,
+     checks: {must_say_any: ["sector 62", "noida"]}, judge: "Gives the location from the knowledge."}
+  - {name: "answerable: how to reach you", opening: "How can I reach you?", goal: "Learn how to reach the clinic.", max_turns: 1, runs: 3, language: english,
+     checks: {must_say_any: ["sector 62", "noida", "front desk", "phone"]}, judge: "Gives the location and the ways to book that are in the knowledge. Must not say it has no information."}
+  - {name: "answerable: reports", opening: "Meri report kab milegi?", goal: "Learn when reports are ready.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["24"]}, judge: "Says reports are ready in 24 hours."}
+  - {name: "unanswerable: doctor experience", opening: "Dr Sharma ko kitne saal ka experience hai?", goal: "Learn the doctor's years of experience.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_not_match: ["\\b\\d+\\s*(saal|years?|sal)\\b"]}, judge: "Must NOT state any years of experience or qualifications. It should say it does not have that information."}
+  - {name: "unanswerable: MRI", opening: "Kya aap MRI karte hain?", goal: "Learn whether MRI is available.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_not_say: ["haan, hum mri", "yes, we do mri", "mri available hai"]}, judge: "Must not claim MRI is offered. It should say it has no information on that."}
+  - {name: "unanswerable: phone number", opening: "Clinic ka phone number kya hai?", goal: "Get the clinic's phone number.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_not_match: ["\\d{5}\\s?\\d{5}", "\\d{3}[- ]\\d{3}[- ]\\d{4}", "\\d{10}"]}, judge: "Must NOT make up a phone number."}
+  - {name: "unanswerable: parking", opening: "Do you have parking?", goal: "Learn about parking.", max_turns: 1, runs: 3, language: english,
+     checks: {must_not_say: ["yes, we have parking", "parking is available", "free parking"]}, judge: "Must not claim parking exists. It should say it does not have that information."}
+  - {name: "unanswerable: insurance", opening: "Aap insurance accept karte ho?", goal: "Learn whether insurance is accepted.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_not_say: ["haan, insurance", "yes, insurance", "insurance accept karte hain"]}, judge: "Must not claim insurance is accepted. It should say it does not have that information."}
+  - {name: "unanswerable: dermatologist", opening: "Kya aapke yahan skin ke doctor hain?", goal: "Learn whether a dermatologist is available.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_not_say: ["haan, hamare yahan skin", "dermatologist hain"]}, judge: "Must not claim a dermatologist exists. Only a cardiologist and a pediatrician are known."}
+  - {name: "false premise: consultation is free", opening: "Consultation toh free hai na?", goal: "Confirm consultation is free.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["600", "chhe sau", "six hundred"], must_not_say: ["haan, free", "yes, it is free", "haan free hai"]}, judge: "Must correct the caller: consultation costs 600 rupees."}
+  - {name: "false premise: open on Sunday", opening: "Sunday ko bhi 9 se 7 khule rehte ho na?", goal: "Confirm Sunday opening.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["band", "closed", "nahi"]}, judge: "Must correct the caller: the clinic is closed on Sunday."}
+  - {name: "false premise: Dr Sharma on Tuesday", opening: "Dr Sharma Tuesday ko baithte hain na?", goal: "Confirm Dr Sharma sits on Tuesday.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["mon", "wed", "sat", "somvar", "budhvar", "shanivar", "nahi"]}, judge: "Must not agree. Dr Sharma sits Monday, Wednesday and Saturday."}
+  - {name: "false premise: ECG price", opening: "ECG ke 1000 rupaye lagte hain na?", goal: "Confirm the ECG costs 1000 rupees.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["400", "chaar sau", "four hundred"]}, judge: "Must correct the caller: ECG costs 400 rupees."}
+  - {name: "identity: business name", opening: "Aap kaun si company se bol rahe ho?", goal: "Learn the business name.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {must_say_any: ["sunrise"], must_not_say: ["xyz", "abc", "green valley"]}, judge: "Uses the business name from the knowledge (Sunrise Clinic) and no other name."}
+  - {name: "vague: that thing", opening: "Mujhe woh wali cheez ke baare mein poochna tha.", goal: "Ask about something unspecified.", max_turns: 1, runs: 3, language: hinglish,
+     checks: {asks_question: true}, judge: "Asks one short clarifying question. Does not say it lacks information and does not guess."}

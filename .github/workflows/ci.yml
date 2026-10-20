@@ -1,0 +1,50 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (frozen lock file)
+        run: uv sync --frozen
+      - name: Unit tests
+        run: uv run pytest -q
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
+    env:
+      # Placeholders so the build can run. Real values live in Vercel.
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_ANON_KEY: placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - run: npm ci
+      - name: Types
+        run: npx tsc --noEmit
+      - name: Wording tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Agent image builds
+        run: docker build -t voice-agent .
+      - name: Background worker image builds
+        run: docker build -f deploy/background.Dockerfile -t voice-background .

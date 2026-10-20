@@ -1,0 +1,10 @@
+name: asks_for_a_person_in_first_sentence
+persona: "Impatient. Does not want to talk to a machine."
+language: hinglish
+opening: "Mujhe kisi insaan se baat karni hai."
+goal: "Get a person. If the agent offers a callback, accept and give your number 9876543210 when asked, and say yes when it reads the number back."
+checks:
+  tools_called: [request_human]
+  tools_not_called: []
+judge: "The agent must not argue or try to keep the caller. It offers a callback from the team (it cannot connect live yet), asks for or confirms the number, and never promises an exact time."
+runs: 3

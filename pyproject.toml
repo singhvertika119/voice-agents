@@ -3,26 +3,27 @@ name = "voice-platform"
 version = "0.1.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+  # What the voice agent needs at run time. Heavier tools live in the groups below so the deployed image stays small.
   "python-dotenv",
   "pyyaml",
-  "pytest",
   "httpx",
-  "jiwer",
-  "soundfile",
   "numpy",
-  "scipy",
-  "datasets",
+  "cryptography>=50.0.2",
   "livekit-agents[silero,turn-detector]~=1.2",
   "livekit-plugins-sarvam",
   "livekit-plugins-deepgram",
   "livekit-plugins-google",
   "livekit-plugins-cartesia",
-  "pymupdf>=1.28.2",
-  "python-docx>=1.2.0",
-  "openpyxl>=3.1.5",
-  "trafilatura>=2.3.1",
-  "cryptography>=50.0.2",
 ]
+
+[dependency-groups]
+ingestion = ["pymupdf>=1.28.2", "python-docx>=1.2.0", "openpyxl>=3.1.5", "trafilatura>=2.3.1"]   # document reader worker
+bench = ["jiwer", "soundfile", "scipy", "datasets"]                                              # provider benchmarks
+dev = ["pytest"]
+
+[tool.uv]
+# Local `uv sync` / `uv run` keep installing everything; images ask for only what they need (--no-default-groups --group ...).
+default-groups = ["ingestion", "bench", "dev"]
 
 [tool.pytest.ini_options]
 pythonpath = ["apps/agent-worker", "apps/ingestion-worker", "packages/core"]

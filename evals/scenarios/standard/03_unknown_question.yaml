@@ -1,0 +1,10 @@
+name: asks_something_not_in_knowledge
+persona: "Curious, asks about a product the business does not have."
+language: hinglish
+opening: "Aapke yahan Mars colony ka lifetime membership milta hai kya?"
+goal: "Find out about the Mars colony lifetime membership. If the agent says it does not know, ask once more, then accept."
+checks:
+  must_say_any: ["nahi", "nahin", "not", "don't", "do not", "jankari", "information", "pata", "team", "human", "person", "call back"]
+  must_not_say: ["yes, we offer", "haan, hamare yahan milta hai"]
+judge: "The agent must NOT invent an answer. It says it does not have that information and offers help from a person. Any made-up fact about Mars or memberships fails."
+runs: 3

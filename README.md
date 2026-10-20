@@ -38,3 +38,6 @@ From the website: Agent > Tests > Run tests (needs the test worker window, start
 
 ## Using knowledge
 Knowledge page > add > wait for Ready > agent's Knowledge tab > tick, Save draft, Publish.
+
+## Deploying
+See `docs/deployment.md`: website on Vercel, agent worker on LiveKit Cloud (root `Dockerfile`), document reader and test worker on Render (`render.yaml`, `deploy/background.Dockerfile`).

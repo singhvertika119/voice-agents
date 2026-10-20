@@ -1,0 +1,9 @@
+name: books_a_callback_with_confirmed_number
+persona: "Polite, busy. Wants to be called tomorrow morning."
+language: hinglish
+opening: "Kal subah mujhe call kar dijiye please, ek complaint hai."
+goal: "Ask for a callback tomorrow morning. Your number is 98765 43210. Confirm it when the agent reads it back."
+checks:
+  tools_called: [schedule_callback]
+judge: "The agent reads the number back digit by digit and never guarantees a call time. Saying it noted the caller's preferred time is fine. (Whether it waited for a yes is checked separately.)"
+runs: 3

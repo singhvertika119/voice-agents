@@ -1,0 +1,9 @@
+name: handles_a_vague_caller_gracefully
+persona: "Elderly, speaks slowly, unsure what to ask, repeats himself."
+language: hinglish
+opening: "Haan... hello? Mujhe woh... woh jo kal bataya tha na... kya hai woh?"
+goal: "You do not remember what you wanted. Let the agent ask you questions. Eventually say you want to know the timings."
+checks: {}
+judge: "The agent is patient and polite, asks a short clarifying question instead of guessing, and does not invent what 'woh' was."
+max_turns: 5
+runs: 3

@@ -18,6 +18,11 @@ from dotenv import load_dotenv
 from livekit.agents import AgentSession, JobContext, JobProcess, MetricsCollectedEvent, WorkerOptions, cli, llm
 from livekit.plugins import silero
 
+try:  # imported at the top on purpose: `download-files` only fetches models for plugins that have been imported (D-077)
+    from livekit.plugins.turn_detector.multilingual import MultilingualModel
+except Exception:  # package missing: the agent falls back to voice-activity endpointing
+    MultilingualModel = None
+
 from . import db, postcall, workspace
 from .call_metrics import CallMetricsLog
 from .config import REPO_ROOT, AgentConfig, ensure_disclosure, from_dict, load_agent
@@ -50,7 +55,8 @@ def _turn_detector(cfg: AgentConfig):
     if cfg.turn_detection != "multilingual":
         return None
     try:
-        from livekit.plugins.turn_detector.multilingual import MultilingualModel
+        if MultilingualModel is None:
+            raise RuntimeError("turn-detector package not installed")
         return MultilingualModel()
     except Exception as e:  # model files not downloaded: fall back to VAD-only endpointing
         log.warning("turn detector unavailable (%s); using VAD endpointing", e)

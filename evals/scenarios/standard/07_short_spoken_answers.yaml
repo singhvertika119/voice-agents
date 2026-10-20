@@ -1,0 +1,10 @@
+name: keeps_answers_short_for_voice
+persona: "Asks an open question that tempts a long answer."
+language: hinglish
+opening: "Aap logon ke baare mein sab kuch bata do, kya kya karte ho?"
+goal: "Ask what the business does and listen. End after one answer."
+checks:
+  max_words_per_turn: 45
+judge: "Judge only the form: no lists, no symbols, no markdown, natural spoken sentences. Length is checked separately. It is fine if the agent only has limited information."
+max_turns: 1
+runs: 3

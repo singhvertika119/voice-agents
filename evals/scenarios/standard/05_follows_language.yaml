@@ -1,0 +1,9 @@
+name: replies_in_the_callers_language
+persona: "Speaks only English, short and formal."
+language: english
+opening: "Hello, could you tell me how I can reach you?"
+goal: "Ask for contact details or location from the agent, using only English."
+checks: {}
+judge: "The caller speaks only English, so every agent reply must be in English (names and Indian words are fine). Replies in Hindi or Hinglish fail."
+max_turns: 2
+runs: 3
