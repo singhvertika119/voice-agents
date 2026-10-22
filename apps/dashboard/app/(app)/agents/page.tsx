@@ -4,8 +4,8 @@ import { Badge, Button, ButtonLink, Card, CardHeader, EmptyState, Field, PageHea
 import { time } from "@/lib/format";
 import { createAgent } from "./actions";
 
-export default async function AgentsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error } = await searchParams;
+export default async function AgentsPage({ searchParams }: { searchParams: Promise<{ error?: string; deleted?: string }> }) {
+  const { error, deleted } = await searchParams;
   const supabase = await supabaseServer();
   const { data: agents } = await supabase
     .from("agents")
@@ -16,6 +16,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
     <>
       <PageHeader title="Agents" intro="Each agent answers calls on its own, with its own voice and knowledge." action={<ButtonLink href="/onboarding/business-type" variant="secondary">Guided setup</ButtonLink>} />
       {error && <p role="alert" className="text-[13px] text-danger-fg">{error}</p>}
+      {deleted && !error && <p role="status" className="px-3 py-2 rounded-md bg-success-bg text-success-fg text-[13px]">The agent was deleted. Its past calls are still in your call list.</p>}
 
       <Card className="p-5">
         <form action={createAgent} className="flex flex-wrap items-end gap-4">

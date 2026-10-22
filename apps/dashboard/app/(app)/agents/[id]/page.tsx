@@ -7,7 +7,7 @@ import { time } from "@/lib/format";
 import { TestPanel } from "@/components/test-panel";
 import { AgentEditor, type SourceOption, type ToolOption } from "@/components/agent-editor";
 import { AddScenarioForm, AutoRefresh, RunButton, SmallButton } from "@/components/tests-ui";
-import { publish } from "../actions";
+import { deleteAgent, publish } from "../actions";
 import { deleteScenario, queueTests, setAgentEnabled } from "../test-runs";
 
 type Scenario = { name: string; source: string; runs: number; pass_rate: number; required: number; passed: boolean; results: { run: number; passed: boolean; fixed: Record<string, boolean>; judge: { reason?: string }; transcript: { speaker: string; text: string }[]; error?: string | null }[] };
@@ -73,6 +73,11 @@ export default async function AgentBuilder({
           ) : (
             agent.published_version && <Badge tone="success">{`Live v${agent.published_version}`}</Badge>
           )}
+          <SmallButton
+            label="Delete agent"
+            run={deleteAgent.bind(null, id)}
+            confirmText={`Delete "${agent.name}"? Its versions, test runs and what it remembers about callers are removed and cannot be brought back.${agent.published_version ? " It is live, so new calls to it will stop being answered." : ""} Past calls are kept. Your knowledge and tools are not touched.`}
+          />
           <SmallButton
             label={agent.enabled === false ? "Resume agent" : "Pause agent"}
             run={setAgentEnabled.bind(null, id, agent.enabled === false)}

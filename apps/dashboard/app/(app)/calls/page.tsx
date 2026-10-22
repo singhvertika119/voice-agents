@@ -45,7 +45,7 @@ export default async function CallsPage() {
                         <Link href={`/calls/${c.id}`} className="font-medium hover:underline inline-flex items-center min-h-11">{time(c.started_at)}</Link>
                       </td>
                       <td className="px-3 py-3.5 border-b border-line-subtle">
-                        {agent?.name}<div className="font-mono text-xs text-ink-muted">v{c.agent_version}</div>
+                        {agent?.name ?? "Deleted agent"}<div className="font-mono text-xs text-ink-muted">v{c.agent_version}</div>
                       </td>
                       <td className="px-3 py-3.5 border-b border-line-subtle font-mono text-[13px]">{c.caller_number ?? "Browser test"}</td>
                       <td className="px-3 py-3.5 border-b border-line-subtle font-mono text-[13px]">{duration(c.duration_s)}</td>

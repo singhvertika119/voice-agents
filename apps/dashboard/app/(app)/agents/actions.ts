@@ -93,6 +93,22 @@ export async function saveDraft(agentId: string, _prev: SaveState, formData: For
   };
 }
 
+// Removes the agent with its versions, test runs and caller memory. Its calls stay (shown as "Deleted agent") once
+// migration 0007 is applied; without it the database refuses because calls still point at the agent.
+export async function deleteAgent(agentId: string) {
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase.from("agents").delete().eq("id", agentId).select("id");
+  if (error) {
+    const msg = error.code === "23503"
+      ? "This agent has taken calls, and the database needs one small update before it can keep them (db/migrations/0007_delete_agents.sql in the SQL editor). Nothing was deleted."
+      : `The agent was not deleted. ${error.message}`;
+    redirect(`/agents/${agentId}?error=${encodeURIComponent(msg)}`);
+  }
+  if (!data?.length) redirect(`/agents/${agentId}?error=${encodeURIComponent("The agent was not deleted. You may not have permission, or it is already gone.")}`);
+  revalidatePath("/agents");
+  redirect("/agents?deleted=1");
+}
+
 export async function publish(agentId: string, version: number, override = false) {
   const supabase = await supabaseServer();
   const { data: v } = await supabase.from("agent_versions").select("config").eq("agent_id", agentId).eq("version", version).single();

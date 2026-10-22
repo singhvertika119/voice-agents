@@ -39,7 +39,7 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
       <div>
         <p className="text-[13px] text-ink-muted"><Link href="/calls" className="hover:text-ink inline-flex items-center min-h-11 pr-1">Calls</Link> / {time(call.started_at)}</p>
         <div className="flex flex-wrap items-center gap-3 mt-1">
-          <h1 className="text-xl font-semibold">{agent?.name}</h1>
+          <h1 className="text-xl font-semibold">{agent?.name ?? "Deleted agent"}</h1>
           {call.outcome && <Badge tone={call.outcome === "resolved" ? "success" : call.outcome === "dropped" ? "danger" : "warning"}>{({ resolved: "Resolved", handed_off: "Handed off", callback: "Callback booked", dropped: "Dropped" } as Record<string, string>)[call.outcome] ?? call.outcome}</Badge>}
         </div>
       </div>
