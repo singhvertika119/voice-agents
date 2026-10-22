@@ -9,9 +9,11 @@ import { CallReview } from "@/components/call-review";
 export default async function CallDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await supabaseServer();
-  const { data: call } = await supabase.from("calls").select("*, agents(name)").eq("id", id).single();
+  const [{ data: call }, { data: turns }] = await Promise.all([
+    supabase.from("calls").select("*, agents(name)").eq("id", id).single(),
+    supabase.from("call_turns").select("seq,speaker,text,at_ms,latency_ms").eq("call_id", id).order("seq"),
+  ]);
   if (!call) notFound();
-  const { data: turns } = await supabase.from("call_turns").select("seq,speaker,text,at_ms,latency_ms").eq("call_id", id).order("seq");
   const agent = call.agents as { name: string } | null;
   // The call row was read as the signed-in user, so row-level security already proved they may see this call.
   // The link works for 10 minutes and only for this one file.

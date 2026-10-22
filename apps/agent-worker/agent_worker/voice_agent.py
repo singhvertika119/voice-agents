@@ -7,7 +7,7 @@ from collections.abc import AsyncIterable
 from livekit.agents import Agent
 
 from .config import AgentConfig
-from .language import language_hint
+from .language import language_hint, set_tts_language, tts_language
 from .knowledge import KnowledgeBase, make_lookup_tool
 from .normalize import normalize_for_speech
 from .tools import CONVERSATION_RULES, TOOL_RULES
@@ -27,6 +27,7 @@ class VoiceAgent(Agent):
         all_tools = list(tools or []) + ([make_lookup_tool(kb)] if kb.tables else [])
         super().__init__(instructions=build_instructions(cfg, kb, memory_block, extra_rules), tools=all_tools)
         self.kb = kb
+        self.voice_language = cfg.language   # what the speech providers were built with; changes with the caller's language
 
     async def turn_context_additions(self, caller_text: str) -> list[tuple[str, str]]:
         """Extra (role, text) messages for this turn: a language reminder and, for large knowledge, passages.
@@ -44,7 +45,18 @@ class VoiceAgent(Agent):
             extra.append(("assistant", msg))
         return extra
 
+    def speak_in(self, code: str) -> None:
+        """Switch the voice language (no-op if it is already set or there is no live session, as in text tests)."""
+        if code == self.voice_language:
+            return
+        self.voice_language = code
+        try:
+            set_tts_language(self.session.tts, code)
+        except Exception:
+            pass
+
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        self.speak_in(tts_language(new_message.text_content or "", self.voice_language))
         for role, text in await self.turn_context_additions(new_message.text_content or ""):
             turn_ctx.add_message(role=role, content=text)
 

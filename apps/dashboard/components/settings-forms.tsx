@@ -105,11 +105,8 @@ export function EraseForm({ canEdit }: { canEdit: boolean }) {
         <p className="text-[13px] text-ink-muted">When someone asks you to erase their data, enter their number. Their calls, transcripts, saved profile and callback requests are removed together.</p>
       </div>
       <form action={action} className="flex flex-col gap-4">
-        <Field label="Caller's mobile number">
-          <div className="flex gap-2">
-            <span className="h-11 px-3 inline-flex items-center rounded-md border border-line-strong bg-muted font-mono text-sm">+91</span>
-            <input name="phone" inputMode="numeric" placeholder="98765 43210" disabled={!canEdit} className={`${inputCls} font-mono text-sm max-w-60`} />
-          </div>
+        <Field label="Caller's number" helper="An Indian mobile: 10 digits. A number outside India: start with + and the country code, for example +1 415 555 0100.">
+          <input name="phone" inputMode="tel" placeholder="98765 43210" disabled={!canEdit} className={`${inputCls} font-mono text-sm max-w-60`} />
         </Field>
         <label className="flex items-start gap-3 text-sm leading-snug">
           <input type="checkbox" name="confirm" disabled={!canEdit} className="mt-0.5 size-4 accent-ink" /> I understand this cannot be undone.

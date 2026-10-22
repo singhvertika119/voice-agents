@@ -47,3 +47,6 @@ Thumbs.db
 *.swp
 *.log
 *.tmp
+
+# Generated per agent by scripts/make_dispatch_rule.py
+deploy/dispatch-*.json

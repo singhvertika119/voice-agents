@@ -29,27 +29,28 @@ export default async function AgentBuilder({
   const { id } = await params;
   const { tab = "instructions", error, live } = await searchParams;
   const supabase = await supabaseServer();
-  const { data: agent } = await supabase.from("agents").select("id,name,published_version,enabled").eq("id", id).single();
+  const onVersions = tab === "versions", onTests = tab === "tests";
+  const onEditor = !onVersions && !onTests;
+  const nothing = Promise.resolve({ data: null as null });
+  // All queries start together (each one is a round trip to the database), and each tab asks only for what it shows.
+  const [{ data: agent }, { data: versions }, { data: srcRows }, { data: toolRows }, { data: member }, { data: runRows }, { data: scenarioRows }] = await Promise.all([
+    supabase.from("agents").select("id,name,published_version,enabled").eq("id", id).single(),
+    supabase.from("agent_versions").select("version,status,config,note,created_at,published_at").eq("agent_id", id).order("version", { ascending: false }),
+    onEditor ? supabase.from("knowledge_sources").select("id,name,status,stats").order("created_at", { ascending: false }) : nothing,
+    onEditor ? supabase.from("tools").select("id,name,description,enabled,requires_confirmation").order("name") : nothing,
+    onVersions ? supabase.from("tenant_members").select("role").limit(1).single() : nothing,
+    onVersions || onTests ? supabase.from("eval_runs").select("id,agent_version,status,passed,pass_rate,p95_reply_ms,results,error,created_at").eq("agent_id", id).order("created_at", { ascending: false }).limit(10) : nothing,
+    onTests ? supabase.from("eval_scenarios").select("id,name,spec").or(`agent_id.eq.${id},agent_id.is.null`).order("created_at", { ascending: false }) : nothing,
+  ]);
   if (!agent) notFound();
-  const { data: versions } = await supabase
-    .from("agent_versions")
-    .select("version,status,config,note,created_at,published_at")
-    .eq("agent_id", id)
-    .order("version", { ascending: false });
   const latest = versions?.[0];
   const cfg = latest?.config as AgentConfig;
   const hasDraft = latest?.status === "draft";
-  const { data: srcRows } = await supabase.from("knowledge_sources").select("id,name,status,stats").order("created_at", { ascending: false });
   const sources: SourceOption[] = (srcRows ?? []).map((r) => ({ id: r.id, name: r.name, status: r.status, chunks: Number((r.stats as { chunks?: number })?.chunks ?? 0) }));
-  const { data: toolRows } = await supabase.from("tools").select("id,name,description,enabled,requires_confirmation").order("name");
   const tools = (toolRows ?? []) as ToolOption[];
-  const { data: member } = await supabase.from("tenant_members").select("role").limit(1).single();
   const canOverride = ["owner", "admin"].includes(member?.role ?? "");
   const editing = tab === "voice" ? "voice" : tab === "knowledge" ? "knowledge" : tab === "tools" ? "tools" : "instructions";
-
-  const { data: runRows } = await supabase.from("eval_runs").select("id,agent_version,status,passed,pass_rate,p95_reply_ms,results,error,created_at").eq("agent_id", id).order("created_at", { ascending: false }).limit(10);
   const runs = (runRows ?? []) as RunRow[];
-  const { data: scenarioRows } = await supabase.from("eval_scenarios").select("id,name,spec").or(`agent_id.eq.${id},agent_id.is.null`).order("created_at", { ascending: false });
   const latestRunFor = (v: number) => runs.find((r) => r.agent_version === v);
   const running = runs.some((r) => r.status === "queued" || r.status === "running");
 
@@ -87,7 +88,7 @@ export default async function AgentBuilder({
             <p role="status" className="px-3 py-2 rounded-md bg-success-bg text-success-fg text-[13px]">Your agent is live. New calls now use this version. Phone numbers are connected separately; until then, test it from the panel on the right.</p>
           )}
 
-          {!["versions", "tests"].includes(tab) && cfg && <AgentEditor agentId={id} cfg={cfg} sources={sources} tools={tools} initialTab={editing} />}
+          {!["versions", "tests"].includes(tab) && cfg && <AgentEditor agentId={id} name={agent.name} cfg={cfg} sources={sources} tools={tools} initialTab={editing} />}
 
           {["versions", "tests"].includes(tab) && (
             <div className="flex flex-col gap-4">

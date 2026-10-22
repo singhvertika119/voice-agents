@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseServer } from "@/lib/supabase/server";
+import { toE164 } from "@/lib/phone";
 
 export type FormState = { ok: boolean; message: string } | null;
 
@@ -57,17 +58,17 @@ export async function eraseCaller(_prev: FormState, formData: FormData): Promise
   const { supabase, tenantId, role } = await ctx();
   if (!tenantId || !["owner", "admin"].includes(role ?? "")) return { ok: false, message: "Only an owner or admin can erase a caller's data." };
   if (formData.get("confirm") !== "on") return { ok: false, message: "Tick the box to confirm. This cannot be undone." };
-  const digits = String(formData.get("phone") ?? "").replace(/\D/g, "").replace(/^91(?=\d{10}$)/, "").replace(/^0/, "");
-  if (!/^[6-9]\d{9}$/.test(digits)) return { ok: false, message: "Enter the caller's 10-digit mobile number." };
+  const phone = toE164(String(formData.get("phone") ?? ""));
+  if (!phone) return { ok: false, message: "Enter the caller's 10-digit mobile number, or the full number starting with + for a number outside India." };
   // Audio files are not in the database, so remove them first (the erase function below cannot reach storage).
-  const { data: rec } = await supabase.from("calls").select("recording_path").eq("tenant_id", tenantId).eq("caller_number", `+91${digits}`).not("recording_path", "is", null);
+  const { data: rec } = await supabase.from("calls").select("recording_path").eq("tenant_id", tenantId).eq("caller_number", phone).not("recording_path", "is", null);
   const paths = (rec ?? []).map((r) => r.recording_path as string);
   if (paths.length) {
     const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const { error: rmErr } = await admin.storage.from("recordings").remove(paths);
     if (rmErr) return { ok: false, message: "Could not delete the recordings, so nothing was erased. Try again." };
   }
-  const { data, error } = await supabase.rpc("erase_caller", { p_tenant: tenantId, p_phone: `+91${digits}` });
+  const { data, error } = await supabase.rpc("erase_caller", { p_tenant: tenantId, p_phone: phone });
   if (error) return { ok: false, message: "Could not erase. " + error.message };
   const r = data as { calls: number; contacts: number; callbacks: number };
   revalidatePath("/calls");

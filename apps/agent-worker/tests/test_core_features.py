@@ -16,6 +16,19 @@ def test_phone_numbers_are_normalised_and_validated():
     assert normalize_phone(None) is None
 
 
+def test_international_numbers_from_phone_calls_are_kept():
+    assert normalize_phone("+1 (415) 555-0100") == "+14155550100"
+    assert normalize_phone("+14155550100") == "+14155550100"
+    assert normalize_phone("0014155550100") == "+14155550100"
+    assert normalize_phone("+44 20 7946 0958") == "+442079460958"
+    assert normalize_phone("+919876543210") == "+919876543210"
+    assert normalize_phone("+91 11 2345 6789") == "+911123456789"   # an Indian landline calling in
+    assert normalize_phone("+91 98765") is None
+    assert normalize_phone("+0123456789") is None
+    assert normalize_phone("+123") is None
+    assert normalize_phone("4155550100") is None                    # no + and not an Indian mobile
+
+
 def test_business_hours_use_ist_and_listed_days():
     s = {"business_hours": {"days": [1, 2, 3, 4, 5, 6], "start": "09:00", "end": "19:00"}}
     assert within_hours(s, datetime(2026, 10, 19, 10, 30, tzinfo=IST))        # Monday 10:30
@@ -41,6 +54,34 @@ def test_disclosure_is_added_when_missing_and_not_duplicated():
     assert "AI assistant" in ensure_disclosure("Namaste, Sunrise Clinic mein swagat hai.")
     ok = "Namaste, main ek AI assistant hoon, yeh call record ho sakti hai."
     assert ensure_disclosure(ok) == ok
+
+
+def test_disclosure_is_added_in_the_greetings_own_language():
+    en = ensure_disclosure("Welcome to Sunrise Clinic. How can I help you today?")
+    assert en.startswith("Hello, I am an AI assistant") and "Namaste" not in en and en.endswith("help you today?")
+    assert ensure_disclosure("क्लिनिक में आपका स्वागत है").startswith("नमस्ते, मैं एक एआई")
+    assert ensure_disclosure("Namaste, Sunrise Clinic mein aapka swagat hai.").startswith("Namaste, main ek AI assistant")
+
+
+def test_voice_language_follows_the_text():
+    from agent_worker.language import set_tts_language, tts_language
+    assert tts_language("What are your timings on Sunday?", "hi-IN") == "en-IN"
+    assert tts_language("consultation ki fees kitni hai", "en-IN") == "hi-IN"
+    assert tts_language("क्लिनिक कब खुलता है", "en-IN") == "hi-IN"
+    assert tts_language("yes", "hi-IN") == "hi-IN"            # one word is not enough to switch
+    assert tts_language("yes", "en-IN") == "en-IN"
+
+    class FakeSarvam:
+        __module__ = "livekit.plugins.sarvam.tts"
+        def update_options(self, **kw): self.kw = kw
+    class FakeCartesia:
+        __module__ = "livekit.plugins.cartesia.tts"
+        def update_options(self, **kw): self.kw = kw
+    class Chain:
+        def __init__(self): self._tts_instances = [FakeSarvam(), FakeCartesia()]
+    c = Chain()
+    set_tts_language(c, "en-IN")
+    assert c._tts_instances[0].kw == {"target_language_code": "en-IN"} and c._tts_instances[1].kw == {"language": "en"}
 
 
 def test_language_style_detection():

@@ -25,7 +25,10 @@ def _client() -> httpx.AsyncClient:
 
 def parse_room(room: str) -> tuple[str, str] | None:
     """Rooms created by the dashboard test panel are named 'live-<uuid>-<rand>' (published version)
-    or 'draft-<uuid>-<rand>' (latest version, even if unpublished). Returns (mode, agent_id)."""
+    or 'draft-<uuid>-<rand>' (latest version, even if unpublished). Returns (mode, agent_id).
+
+    Phone calls use the same names: the SIP dispatch rule sets room_prefix to 'live-<uuid>-' and LiveKit appends the
+    caller's number and a random suffix (scripts/make_dispatch_rule.py), so one rule per agent routes the call."""
     m = re.match(r"^(live|draft)-([0-9a-f-]{36})(?:-|$)", room, re.I)
     return (m.group(1).lower(), m.group(2)) if m else None
 

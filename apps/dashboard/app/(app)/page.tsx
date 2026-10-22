@@ -6,9 +6,10 @@ import { count, inr } from "@/lib/format";
 export default async function Home() {
   const supabase = await supabaseServer();
   const since = new Date(Date.now() - 7 * 864e5).toISOString();
-  const [{ data: calls }, { data: agents }] = await Promise.all([
+  const [{ data: calls }, { data: agents }, { count: waitingCallbacks }] = await Promise.all([
     supabase.from("calls").select("outcome,avg_reply_ms,cost_usd").gte("started_at", since),
     supabase.from("agents").select("id,name,published_version"),
+    supabase.from("callbacks").select("id", { count: "exact", head: true }).eq("status", "open"),
   ]);
   const total = calls?.length ?? 0;
   const resolved = calls?.filter((c) => c.outcome === "resolved").length ?? 0;
@@ -17,7 +18,6 @@ export default async function Home() {
   const avgReply = replies.length ? replies.reduce((a, b) => a + b, 0) / replies.length / 1000 : null;
   const spent = calls?.reduce((s, c) => s + Number(c.cost_usd ?? 0), 0) ?? 0;
   const needsLive = agents?.filter((a) => !a.published_version) ?? [];
-  const { count: waitingCallbacks } = await supabase.from("callbacks").select("id", { count: "exact", head: true }).eq("status", "open");
 
   return (
     <>

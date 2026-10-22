@@ -11,13 +11,16 @@ from scipy.signal import resample_poly
 from dotenv import load_dotenv; load_dotenv(".env", override=True)
 from livekit import api, rtc
 AG=sys.argv[1]; SR=16000
+# Optional second argument: a phone-style caller, e.g. +14155550100. The room is then named the way a SIP dispatch rule
+# would name it (live-<agent>-<number>_<random>), so this also checks phone routing and non-Indian numbers.
+PHONE=sys.argv[2] if len(sys.argv)>2 else None
 def clip(path):
     x,sr=sf.read(path); x=resample_poly(x,SR,sr) if sr!=SR else x
     return (np.clip(x,-1,1)*32767).astype(np.int16)
 async def main():
-    room_name=f"live-{AG}-sim{uuid.uuid4().hex[:4]}"
+    room_name=f"live-{AG}-{PHONE}_{uuid.uuid4().hex[:6]}" if PHONE else f"live-{AG}-sim{uuid.uuid4().hex[:4]}"
     tok=(api.AccessToken(os.environ["LIVEKIT_API_KEY"],os.environ["LIVEKIT_API_SECRET"]).with_identity("sim-caller")
-         .with_grants(api.VideoGrants(room_join=True,room=room_name)).with_attributes({"caller_number":"+919999900001"})
+         .with_grants(api.VideoGrants(room_join=True,room=room_name)).with_attributes({"caller_number":PHONE or "+919999900001"})
          .with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name="voice-platform")])).to_jwt())
     room=rtc.Room(); await room.connect(os.environ["LIVEKIT_URL"],tok)
     src=rtc.AudioSource(SR,1); track=rtc.LocalAudioTrack.create_audio_track("mic",src)

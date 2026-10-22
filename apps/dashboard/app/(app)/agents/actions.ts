@@ -40,6 +40,15 @@ export async function saveDraft(agentId: string, _prev: SaveState, formData: For
     const v = formData.get(key);
     if (typeof v === "string") next[key] = v;
   }
+  // The name belongs to the agent, not to a version, so it changes at once and does not create a draft.
+  const rawName = formData.get("name");
+  if (typeof rawName === "string") {
+    const newName = rawName.trim();
+    if (!newName) return { ok: false, message: "The agent needs a name." };
+    if (newName.length > 60) return { ok: false, message: "Keep the name under 60 characters." };
+    const { error: nameErr } = await supabase.from("agents").update({ name: newName }).eq("id", agentId);
+    if (nameErr) return { ok: false, message: `The name was not saved. ${nameErr.message}` };
+  }
   const voice = formData.get("voice");
   if (typeof voice === "string" && VOICES.some((x) => x.id === voice)) {
     next.voice.tts_primary = { ...next.voice.tts_primary, speaker: voice };
@@ -72,6 +81,7 @@ export async function saveDraft(agentId: string, _prev: SaveState, formData: For
     version = data as number;
   }
   revalidatePath(`/agents/${agentId}`);
+  revalidatePath("/agents");
   const left = findPlaceholders(next);
   return {
     ok: true,

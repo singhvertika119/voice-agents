@@ -5,8 +5,8 @@ import { StepRail } from "@/components/wizard";
 
 export default async function OnboardingLayout({ children }: { children: React.ReactNode }) {
   const supabase = await supabaseServer();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) redirect("/login");
+  const { data } = await supabase.auth.getClaims();   // local check; the proxy already refreshed the session
+  if (!data?.claims) redirect("/login");
   return (
     <div className="min-h-screen flex flex-wrap bg-page">
       <Suspense fallback={null}><StepRail /></Suspense>

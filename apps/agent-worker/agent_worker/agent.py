@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+from livekit import rtc
 from livekit.agents import AgentSession, JobContext, JobProcess, MetricsCollectedEvent, WorkerOptions, cli, llm
 from livekit.plugins import silero
 
@@ -28,6 +29,7 @@ from .call_metrics import CallMetricsLog
 from .config import REPO_ROOT, AgentConfig, ensure_disclosure, from_dict, load_agent
 from .custom_tools import load_custom_tools
 from .knowledge import KnowledgeBase, load_knowledge
+from .language import tts_language
 from .pii import redact
 from .providers import build_stack, probe_providers
 from .recording import CallRecorder
@@ -71,10 +73,33 @@ async def _speak_and_hang_up(session: AgentSession, text: str) -> None:
         session.shutdown()
 
 
+async def _wait_until_answered(ctx: JobContext, participant: rtc.Participant, timeout: float = 60.0) -> None:
+    """Outbound calls: the phone participant appears while it is still ringing. Do not greet until it is answered
+    (LiveKit sets sip.callStatus to 'active'). Inbound calls and browser callers are already active."""
+    if participant.kind != rtc.ParticipantKind.PARTICIPANT_KIND_SIP or participant.attributes.get("sip.callStatus", "active") == "active":
+        return
+    answered = asyncio.Event()
+
+    def on_change(_changed: dict, p: rtc.Participant) -> None:
+        if p.identity == participant.identity and p.attributes.get("sip.callStatus") == "active":
+            answered.set()
+
+    ctx.room.on("participant_attributes_changed", on_change)
+    try:
+        await asyncio.wait_for(answered.wait(), timeout)
+    except asyncio.TimeoutError:
+        log.warning("phone call was not answered within %.0f s", timeout)
+    finally:
+        ctx.room.off("participant_attributes_changed", on_change)
+
+
 async def entrypoint(ctx: JobContext):
     tenant_id = version = call_row = None
     room = db.parse_room(ctx.room.name)   # dashboard test panel: room name carries the agent id
     agent_ref = room[1] if room else os.getenv("AGENT_ID")
+    if not agent_ref:
+        log.error("room %s does not name an agent and AGENT_ID is not set; the SIP dispatch rule needs room_prefix 'live-<agent id>-'", ctx.room.name)
+        return
     if room or db.is_agent_uuid(agent_ref):  # platform mode: config comes from the database
         pub = await (db.fetch_latest(agent_ref) if room and room[0] == "draft" else db.fetch_published(agent_ref))
         cfg = from_dict(agent_ref, pub["agent"]["name"], pub["config"])
@@ -85,6 +110,7 @@ async def entrypoint(ctx: JobContext):
 
     await ctx.connect()
     participant = await ctx.wait_for_participant()
+    await _wait_until_answered(ctx, participant)
     caller_number = normalize_phone(participant.attributes.get("caller_number") or participant.attributes.get("sip.phoneNumber"))
 
     settings = await workspace.get_settings(tenant_id) if tenant_id else dict(workspace.DEFAULT_SETTINGS)
@@ -241,6 +267,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(agent=agent, room=ctx.room)
     if recorder and await recorder.attach() and recorder.started_at:
         t_start = recorder.started_at   # transcript times now line up with the audio, so a click on a line can seek to it
+    agent.speak_in(tts_language(greeting, cfg.language))   # an English greeting is spoken with the English voice setting
     if mode in ("full", "disabled"):
         await _speak_and_hang_up(session, greeting)
         return

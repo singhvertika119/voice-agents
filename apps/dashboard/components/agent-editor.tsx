@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Check } from "lucide-react";
-import { Badge, Button, Card, Field, textareaCls } from "@/components/ui";
+import { Badge, Button, Card, Field, inputCls, textareaCls } from "@/components/ui";
 import { VOICES, findPlaceholders, type AgentConfig } from "@/lib/agent-config";
 import { saveDraft, type SaveState } from "@/app/(app)/agents/actions";
 
@@ -18,7 +18,7 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 // One form for all editing tabs, so switching tabs never throws away what you typed.
-export function AgentEditor({ agentId, cfg, sources, tools, initialTab }: { agentId: string; cfg: AgentConfig; sources: SourceOption[]; tools: ToolOption[]; initialTab: Tab }) {
+export function AgentEditor({ agentId, name, cfg, sources, tools, initialTab }: { agentId: string; name: string; cfg: AgentConfig; sources: SourceOption[]; tools: ToolOption[]; initialTab: Tab }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [state, action, pending] = useActionState<SaveState, FormData>(saveDraft.bind(null, agentId), null);
   const [text, setText] = useState({ greeting: cfg.greeting, instructions: cfg.instructions, knowledge: cfg.knowledge });
@@ -53,7 +53,10 @@ export function AgentEditor({ agentId, cfg, sources, tools, initialTab }: { agen
       )}
 
       <Card className={`p-5 flex flex-col gap-5 ${show("instructions")}`}>
-        <Field label="Greeting" helper="The first thing callers hear. Keep it short and say it is an AI assistant.">
+        <Field label="Agent name" helper="Shown in your dashboard and call list. Callers do not hear it unless you put it in the greeting.">
+          <input name="name" defaultValue={name} required maxLength={60} className={inputCls} />
+        </Field>
+        <Field label="Greeting" helper="The first thing callers hear, word for word. Write it in the language you want. If it does not say it is an AI assistant and that the call may be recorded, a short line saying so is added in the same language.">
           <textarea name="greeting" rows={3} value={text.greeting} onChange={(e) => setText({ ...text, greeting: e.target.value })} className={textareaCls} />
         </Field>
         <Field label="Instructions" helper="How the agent should behave and what it must never do.">

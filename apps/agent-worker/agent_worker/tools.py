@@ -59,8 +59,18 @@ When to use your tools:
 
 
 def normalize_phone(raw: str | None) -> str | None:
-    """Indian mobile numbers to E.164. Returns None if it does not look like a valid number."""
-    digits = re.sub(r"\D", "", raw or "")
+    """E.164, or None if it does not look like a valid number.
+
+    A number with a leading + (or 00) is taken as international and kept as given (phone calls arrive this way,
+    including from outside India). Without one, only Indian mobile numbers are accepted, since that is what people
+    say aloud or type into the dashboard."""
+    text = (raw or "").strip()
+    digits = re.sub(r"\D", "", text)
+    if text.startswith("+") or text.startswith("00"):
+        digits = digits[2:] if text.startswith("00") else digits
+        if digits.startswith("91"):
+            return f"+{digits}" if re.fullmatch(r"91\d{10}", digits) else None   # India: 10 digits after the country code
+        return f"+{digits}" if re.fullmatch(r"[1-9]\d{7,14}", digits) else None
     if len(digits) == 12 and digits.startswith("91"):
         digits = digits[2:]
     if len(digits) == 11 and digits.startswith("0"):
