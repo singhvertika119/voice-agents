@@ -4,11 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import re
-
 import yaml
-
-from .language import style
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -44,20 +40,3 @@ def load_agent(agent_id: str | None = None, path: Path | None = None) -> AgentCo
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return AgentConfig(**data)
 
-
-DISCLOSURE = {
-    "english": "Hello, I am an AI assistant and this call may be recorded.",
-    "hinglish": "Namaste, main ek AI assistant hoon aur yeh call record ho sakti hai.",
-    "devanagari": "नमस्ते, मैं एक एआई असिस्टेंट हूँ और यह कॉल रिकॉर्ड हो सकती है।",
-}
-_DISCLOSES_AI = re.compile(r"(?<![A-Za-z])(?:ai|a\.i\.|artificial|assistant|bot|virtual|automated)(?![A-Za-z])|एआई|असिस्टेंट|रोबोट", re.I)
-
-
-def ensure_disclosure(greeting: str) -> str:
-    """Every call must tell the caller they are talking to an AI and that the call may be recorded (PRD FR-11, TRAI).
-    If the owner's greeting does not say so, the platform adds the sentence rather than trusting the text.
-    The sentence is added in the language of the greeting, so an English greeting is not given a Hindi first line."""
-    g = greeting.strip()
-    if _DISCLOSES_AI.search(g):
-        return g
-    return DISCLOSURE[style(g)] + " " + g

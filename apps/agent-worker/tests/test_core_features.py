@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 
-from agent_worker.config import ensure_disclosure
 from agent_worker.language import language_hint, style
 from agent_worker.tools import CallState, describe_hours, normalize_phone, within_hours
 
@@ -48,19 +47,6 @@ def test_call_outcome_comes_from_what_the_agent_did():
     assert s.outcome(True) == "handed_off"
     s.callback_booked = True
     assert s.outcome(True) == "callback"
-
-
-def test_disclosure_is_added_when_missing_and_not_duplicated():
-    assert "AI assistant" in ensure_disclosure("Namaste, Sunrise Clinic mein swagat hai.")
-    ok = "Namaste, main ek AI assistant hoon, yeh call record ho sakti hai."
-    assert ensure_disclosure(ok) == ok
-
-
-def test_disclosure_is_added_in_the_greetings_own_language():
-    en = ensure_disclosure("Welcome to Sunrise Clinic. How can I help you today?")
-    assert en.startswith("Hello, I am an AI assistant") and "Namaste" not in en and en.endswith("help you today?")
-    assert ensure_disclosure("क्लिनिक में आपका स्वागत है").startswith("नमस्ते, मैं एक एआई")
-    assert ensure_disclosure("Namaste, Sunrise Clinic mein aapka swagat hai.").startswith("Namaste, main ek AI assistant")
 
 
 def test_voice_language_follows_the_text():

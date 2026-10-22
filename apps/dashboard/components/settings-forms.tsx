@@ -66,7 +66,7 @@ export function SettingsForm({ v, canEdit }: { v: SettingsValues; canEdit: boole
       <Card className="p-5 flex flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold">Privacy</h2>
-          <p className="text-[13px] text-ink-muted">Callers are told they are speaking to an AI and that calls may be recorded. Check the wording with your lawyer.</p>
+          <p className="text-[13px] text-ink-muted">The greeting is spoken exactly as you write it. If callers should be told they are speaking to an AI or that calls are recorded, say so in the greeting, and check the wording with your lawyer.</p>
         </div>
         <Field label="Keep transcripts for (days)" helper="Older transcripts are deleted automatically. Summaries stay.">
           <input type="number" name="retention_days" min={1} max={3650} defaultValue={v.retention_days} disabled={!canEdit} className={`${inputCls} w-32 font-mono`} />
@@ -75,7 +75,7 @@ export function SettingsForm({ v, canEdit }: { v: SettingsValues; canEdit: boole
           <input type="checkbox" name="record_calls" defaultChecked={v.record_calls} disabled={!canEdit} className="mt-0.5 size-4 accent-ink" />
           <span>
             <span className="font-medium">Record calls</span><br />
-            <span className="text-[13px] text-ink-muted">Audio is kept in your private storage for the same number of days as transcripts, and only your team can play it. Callers are told at the start of every call that it may be recorded.</span>
+            <span className="text-[13px] text-ink-muted">Audio is kept in your private storage for the same number of days as transcripts, and only your team can play it.</span>
           </span>
         </label>
         <label className="flex items-start gap-3 text-sm leading-snug">

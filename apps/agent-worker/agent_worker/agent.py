@@ -26,7 +26,7 @@ except Exception:  # package missing: the agent falls back to voice-activity end
 
 from . import db, postcall, workspace
 from .call_metrics import CallMetricsLog
-from .config import REPO_ROOT, AgentConfig, ensure_disclosure, from_dict, load_agent
+from .config import REPO_ROOT, AgentConfig, from_dict, load_agent
 from .custom_tools import load_custom_tools
 from .knowledge import KnowledgeBase, load_knowledge
 from .language import tts_language
@@ -106,7 +106,6 @@ async def entrypoint(ctx: JobContext):
         tenant_id, version = pub["agent"]["tenant_id"], pub["version"]
     else:                                    # local mode: YAML file
         cfg = load_agent(agent_ref)
-    cfg.greeting = ensure_disclosure(cfg.greeting)
 
     await ctx.connect()
     participant = await ctx.wait_for_participant()
@@ -120,7 +119,8 @@ async def entrypoint(ctx: JobContext):
             mode = "disabled"
         elif await workspace.degraded_mode():
             mode = "degraded"
-    consent = {"notice": "ai_disclosure_and_recording_notice", "version": CONSENT_NOTICE_VERSION,
+    # The greeting is spoken exactly as the owner wrote it, so the record says that instead of claiming a standard notice was played.
+    consent = {"notice": "owner_greeting_as_written", "version": CONSENT_NOTICE_VERSION,
                "at": datetime.now(timezone.utc).isoformat(), "recording_stored": bool(settings.get("record_calls", True)), "memory": bool(settings.get("memory_enabled"))}
     if tenant_id:
         call_row = await db.start_call(tenant_id, agent_ref, version, ctx.room.name, caller_number, consent)

@@ -59,7 +59,7 @@ export default async function DetailsStep({ searchParams }: { searchParams: Prom
           <Card className="p-5 flex flex-col gap-3">
             <span className="text-xs font-medium uppercase tracking-[0.04em] text-ink-muted">Callers will hear</span>
             <p className="text-[15px] leading-normal">{greeting}</p>
-            <p className="text-[13px] text-ink-muted">The line about it being an AI assistant and the call being recorded is always included. It is shown with your name after you continue.</p>
+            <p className="text-[13px] text-ink-muted">This is a starting point. Callers hear the greeting exactly as written, and you can change it later on the agent's Instructions tab.</p>
             <PlayButton voice="ritu" text={greeting} label="Play greeting" />
           </Card>
         </aside>

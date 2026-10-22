@@ -56,7 +56,7 @@ export function AgentEditor({ agentId, name, cfg, sources, tools, initialTab }: 
         <Field label="Agent name" helper="Shown in your dashboard and call list. Callers do not hear it unless you put it in the greeting.">
           <input name="name" defaultValue={name} required maxLength={60} className={inputCls} />
         </Field>
-        <Field label="Greeting" helper="The first thing callers hear, word for word. Write it in the language you want. If it does not say it is an AI assistant and that the call may be recorded, a short line saying so is added in the same language.">
+        <Field label="Greeting" helper="The first thing callers hear, spoken exactly as you write it. Nothing is added. Write it in the language you want.">
           <textarea name="greeting" rows={3} value={text.greeting} onChange={(e) => setText({ ...text, greeting: e.target.value })} className={textareaCls} />
         </Field>
         <Field label="Instructions" helper="How the agent should behave and what it must never do.">
