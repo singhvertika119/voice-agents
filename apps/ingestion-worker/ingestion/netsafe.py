@@ -1,6 +1,7 @@
 """Fetch a public web page without letting a user-supplied URL reach our own network (SSRF protection)."""
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from urllib.parse import urljoin, urlparse
@@ -30,7 +31,7 @@ async def fetch_public_html(url: str, max_redirects: int = 3) -> str:
     headers = {"User-Agent": "VoiceAgentsBot/0.1 (+knowledge import)", "Accept": "text/html,application/xhtml+xml"}
     async with httpx.AsyncClient(timeout=15, follow_redirects=False, headers=headers) as c:
         for _ in range(max_redirects + 1):
-            assert_public(url)  # re-check every hop: a redirect can point inside our network
+            await asyncio.to_thread(assert_public, url)  # re-check every hop; the DNS lookup blocks, so it runs in a thread
             async with c.stream("GET", url) as r:
                 if r.is_redirect:
                     url = urljoin(url, r.headers.get("location", ""))

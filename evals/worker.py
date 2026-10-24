@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,13 +21,17 @@ load_dotenv(ROOT / ".env", override=True)
 from agent_worker import db, workspace  # noqa: E402
 from agent_worker.config import from_dict  # noqa: E402
 from agent_worker.knowledge import load_knowledge  # noqa: E402
-from vp_core import supa  # noqa: E402
+from vp_core import heartbeat, supa  # noqa: E402
 
 from evals.runner import scenarios as sc  # noqa: E402
 from evals.runner.suite import run_suite  # noqa: E402
 
 log = logging.getLogger("evals")
 MAX_REPLY_MS = 3000
+# Conversations run at the same time. Each one holds an agent session in memory; three together peaked at about
+# 506 MB on a 3-minute run, which is over the 512 MB free Render instance (docs/decision.md D-094). Render sets RENDER.
+CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "1" if os.getenv("RENDER") else "3"))
+INTERRUPTED = "The test worker stopped during this run (on the free server this is usually running out of memory). Run the tests again."
 
 
 async def claim() -> dict | None:
@@ -59,7 +64,8 @@ async def run_job(job: dict) -> None:
             pass
         scenarios += await sc.from_knowledge(ktext, 4)
 
-        report = await run_suite(cfg, kb, scenarios, ktext, runs=job["runs_per_scenario"], settings=settings, max_reply_ms=MAX_REPLY_MS)
+        report = await run_suite(cfg, kb, scenarios, ktext, runs=job["runs_per_scenario"], settings=settings,
+                                 max_reply_ms=MAX_REPLY_MS, concurrency=CONCURRENCY)
         # Keep the stored report small: full transcripts only for runs that failed.
         for s in report["scenarios"]:
             for r in s["results"]:
@@ -78,8 +84,11 @@ async def run_job(job: dict) -> None:
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    async with supa.client() as c:   # a crash mid-run must not leave a run "running" forever
-        await c.patch("/rest/v1/eval_runs", params={"status": "eq.running"}, json={"status": "queued"})
+    # A run still "running" at start means the worker died during it. Re-queuing it made the worker crash on the same
+    # run after every restart (a crash loop), so it is closed as failed with a reason the dashboard shows.
+    async with supa.client() as c:
+        await c.patch("/rest/v1/eval_runs", params={"status": "eq.running"},
+                      json={"status": "failed", "error": INTERRUPTED, "finished_at": datetime.now(timezone.utc).isoformat()})
     log.info("test worker waiting for runs")
     while True:
         try:
@@ -88,6 +97,7 @@ async def main() -> None:
             log.warning("poll failed: %s", e)
             await asyncio.sleep(5)
             continue
+        heartbeat.beat("tests")
         if job:
             log.info("running tests for agent %s v%s", job["agent_id"], job["agent_version"])
             await run_job(job)

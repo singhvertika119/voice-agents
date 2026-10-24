@@ -2,6 +2,7 @@
 a readable message on the source row (docs/decision.md D-033 to D-037)."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -49,7 +50,7 @@ async def load_and_parse(src: dict) -> Parsed:
     if t == "faq":
         return parsers.parse_faq(src["raw_text"] or "")
     if t == "url":
-        return parsers.parse_html(await fetch_public_html(src["url"]))
+        return await asyncio.to_thread(parsers.parse_html, await fetch_public_html(src["url"]))
     if t == "file":
         try:
             data = await supa.download("knowledge", src["storage_path"])
@@ -57,7 +58,8 @@ async def load_and_parse(src: dict) -> Parsed:
             raise ParseError("The uploaded file could not be found. Upload it again.") from e
         if len(data) > MAX_FILE_BYTES:
             raise ParseError("This file is larger than 15 MB. Split it or upload a smaller copy.")
-        return parsers.parse_file(src["file_kind"] or "", data, src["name"])
+        # CPU-heavy (a large PDF takes seconds): run it in a thread so the health page and the test worker keep going.
+        return await asyncio.to_thread(parsers.parse_file, src["file_kind"] or "", data, src["name"])
     raise ParseError("Unknown source type.")
 
 

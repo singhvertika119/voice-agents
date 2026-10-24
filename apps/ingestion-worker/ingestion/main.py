@@ -12,20 +12,25 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
-from vp_core import supa  # noqa: E402
+from vp_core import heartbeat, supa  # noqa: E402
 
 from .pipeline import claim_next, process  # noqa: E402
 
 log = logging.getLogger("ingest")
 
 
+INTERRUPTED = ("Processing stopped part-way because the document reader restarted. Upload it again; "
+               "if it stops again, split the file into smaller parts.")
+
+
 async def reset_stuck() -> None:
-    """A previous run that died mid-way left sources in a working state. Put them back in the queue."""
+    """A previous run that died mid-way left sources in a working state. Retrying them automatically can crash the
+    worker on the same file after every restart, so they are closed as failed with a reason instead."""
     async with supa.client() as c:
         r = await c.patch("/rest/v1/knowledge_sources", params={"status": "in.(parsing,indexing,testing)"},
-                          json={"status": "queued"})
+                          json={"status": "failed", "error": INTERRUPTED})
         if r.status_code < 300 and r.json():
-            log.info("re-queued %d interrupted sources", len(r.json()))
+            log.info("closed %d sources interrupted by a restart", len(r.json()))
 
 
 async def purge_recordings() -> int:
@@ -68,6 +73,7 @@ async def main() -> None:
     asyncio.create_task(purge_loop())
     log.info("ingestion worker waiting for sources")
     while True:
+        heartbeat.beat("ingestion")
         try:
             src = await claim_next()
         except Exception as e:  # database unreachable or tables missing: wait and retry
