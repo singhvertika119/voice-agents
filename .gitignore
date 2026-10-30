@@ -50,3 +50,6 @@ Thumbs.db
 
 # Generated per agent by scripts/make_dispatch_rule.py
 deploy/dispatch-*.json
+
+# SIP trunk files (hold the provider username)
+deploy/outbound-trunk.json

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -13,7 +14,9 @@ from livekit.agents import RunContext, function_tool
 from vp_core import embeddings, supa
 
 log = logging.getLogger("knowledge")
-PROMPT_TOKEN_LIMIT = 6000   # at or below this, put everything in the prompt: no search, no extra latency
+# At or below this, put everything in the prompt: no search, no extra latency. But every reply then resends the whole
+# text (about 4,700 tokens per request for the Front desk agent), which is what exhausts free-tier per-minute limits.
+PROMPT_TOKEN_LIMIT = int(os.getenv("KNOWLEDGE_PROMPT_TOKENS", "6000"))
 RETRIEVE_TIMEOUT_S = 2.0
 TOP_K = 4
 
@@ -55,11 +58,29 @@ class KnowledgeBase:
         t0 = time.perf_counter()
         try:
             vec = await embeddings.embed_query(query)
+        except Exception as e:
+            # Embeddings come from OpenAI; when that account is out of credit, keyword search still finds passages.
+            log.warning("embedding failed (%s); using keyword search only", str(e)[:120])
+            return await self._keyword_search(query, t0)
+        try:
             rows = await supa.rpc("match_chunks", {"p_sources": self.source_ids, "p_embedding": embeddings.to_pg(vec),
                                                    "p_query": query, "p_k": TOP_K, "p_tenant": self.tenant_id},
                                   timeout=RETRIEVE_TIMEOUT_S * 3)
         except Exception as e:
             log.warning("retrieval failed (%s); answering without documents", e)
+            return None
+        self.retrieval_ms.append(int((time.perf_counter() - t0) * 1000))
+        return "\n\n".join(r["content"] for r in rows) if rows else ""
+
+    async def _keyword_search(self, query: str, t0: float) -> str | None:
+        terms = keyword_terms(query)
+        if not terms:
+            return ""
+        try:
+            rows = await supa.select("kb_chunks", select="content", source_id=f"in.({','.join(self.source_ids)})",
+                                     tenant_id=f"eq.{self.tenant_id}", fts=f"fts(simple).{' | '.join(terms)}", limit=str(TOP_K))
+        except Exception as e:
+            log.warning("keyword search failed (%s); answering without documents", e)
             return None
         self.retrieval_ms.append(int((time.perf_counter() - t0) * 1000))
         return "\n\n".join(r["content"] for r in rows) if rows else ""
@@ -82,8 +103,15 @@ class KnowledgeBase:
             return None
 
 
-async def load_knowledge(source_ids: list[str], tenant_id: str) -> KnowledgeBase:
-    """Only sources that belong to the agent's own workspace and are 'ready' are ever used."""
+def keyword_terms(query: str) -> list[str]:
+    """Words worth matching, joined with OR: a spoken question rarely contains every word of the passage it needs."""
+    words = re.findall(r"[0-9A-Za-z\u0900-\u097F]{3,}", query.lower())
+    return list(dict.fromkeys(words))[:12]
+
+
+async def load_knowledge(source_ids: list[str], tenant_id: str, mode: str = "auto") -> KnowledgeBase:
+    """Only sources that belong to the agent's own workspace and are 'ready' are ever used.
+    mode: "auto" (in the prompt if small, searched if large), or "prompt" / "search" to force one for an agent."""
     if not source_ids:
         return KnowledgeBase()
     ids = ",".join(source_ids)
@@ -99,7 +127,7 @@ async def load_knowledge(source_ids: list[str], tenant_id: str) -> KnowledgeBase
         kb = KnowledgeBase(tenant_id=tenant_id, source_ids=ok_ids, tables=tables)
         if total == 0:
             kb.mode = "none"
-        elif total <= PROMPT_TOKEN_LIMIT:
+        elif mode == "prompt" or (mode != "search" and total <= PROMPT_TOKEN_LIMIT):
             chunks = await supa.select("kb_chunks", select="content,source_id,idx", source_id=f"in.({','.join(ok_ids)})",
                                        tenant_id=f"eq.{tenant_id}", order="source_id.asc,idx.asc")
             kb.mode, kb.prompt_text = "prompt", "\n\n".join(c["content"] for c in chunks)

@@ -24,3 +24,10 @@ def test_prompt_addition_mentions_tables_and_documents():
 
 def test_no_knowledge_adds_nothing():
     assert KnowledgeBase().prompt_addition() == ""
+
+
+def test_keyword_terms_for_fallback_search():
+    from agent_worker.knowledge import keyword_terms
+    assert keyword_terms("What are the fees for ECG?") == ["what", "are", "the", "fees", "for", "ecg"]
+    assert keyword_terms("ECG ki fees kitni hai, ECG?") == ["ecg", "fees", "kitni", "hai"]
+    assert keyword_terms("a b") == []

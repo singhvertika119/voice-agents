@@ -133,7 +133,7 @@ async def entrypoint(ctx: JobContext):
         contact_id, memory_block = await workspace.load_memory(tenant_id, caller_number, agent_ref, settings)
 
     state = CallState(tenant_id=tenant_id, agent_id=agent_ref, call_id=call_row, caller_number=caller_number, settings=settings)
-    kb = await load_knowledge(cfg.knowledge_sources, tenant_id) if tenant_id and mode == "normal" else KnowledgeBase()
+    kb = await load_knowledge(cfg.knowledge_sources, tenant_id, cfg.knowledge_mode) if tenant_id and mode == "normal" else KnowledgeBase()
     tools = builtin_tools(state, workspace.DbBackend() if tenant_id else RecordingBackend())
     if tenant_id and mode == "normal":
         tools += await load_custom_tools(tenant_id, list((cfg.__dict__.get("tool_ids")) or []), state)

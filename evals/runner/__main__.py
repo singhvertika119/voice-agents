@@ -59,7 +59,7 @@ async def main() -> int:
         from agent_worker.knowledge import load_knowledge
         pub = await (db.fetch_latest(a.agent) if a.version == "draft" else db.fetch_published(a.agent))
         cfg = from_dict(a.agent, pub["agent"]["name"], pub["config"])
-        kb = await load_knowledge(cfg.knowledge_sources, pub["agent"]["tenant_id"])
+        kb = await load_knowledge(cfg.knowledge_sources, pub["agent"]["tenant_id"], cfg.knowledge_mode)
         ktext = kb.prompt_text
     else:
         cfg = load_agent(a.agent)

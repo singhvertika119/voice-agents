@@ -15,6 +15,7 @@ RATES = {
     "stt_per_sec": 0.0083 / 60,      # ~Rs 30/hour Sarvam / Deepgram-class
     "tts_per_char": 15 / 10_000 / 85,  # Rs 15 per 10K chars (bulbul v2 list), Rs/USD ~85
     "llm_in_per_tok": 0.10 / 1e6,
+    "llm_cached_share": 0.5,          # cached input is billed at half the input price (OpenAI gpt-4o-mini, Groq gpt-oss)
     "llm_out_per_tok": 0.50 / 1e6,
 }
 
@@ -24,7 +25,7 @@ class CallMetricsLog:
         log_dir.mkdir(parents=True, exist_ok=True)
         self.path = log_dir / f"{call_id}.jsonl"
         self.agent_id = agent_id
-        self.totals = {"stt_sec": 0.0, "tts_chars": 0, "llm_in": 0, "llm_out": 0}
+        self.totals = {"stt_sec": 0.0, "tts_chars": 0, "llm_in": 0, "llm_cached": 0, "llm_out": 0}
         self._turns: list[dict] = []   # one entry per caller turn: eou, ttft, ttfb
         self._write({"event": "call_started", "agent_id": agent_id})
 
@@ -43,8 +44,10 @@ class CallMetricsLog:
             if self._turns and "ttft" not in self._turns[-1]:
                 self._turns[-1]["ttft"] = m.ttft
             self.totals["llm_in"] += m.prompt_tokens
+            self.totals["llm_cached"] += getattr(m, "prompt_cached_tokens", 0) or 0   # part of llm_in served from the provider's cache
             self.totals["llm_out"] += m.completion_tokens
             self._write({"event": "llm", "provider": getattr(m, "label", ""), "model": (m.metadata.model_name if getattr(m, "metadata", None) else ""), "ttft_s": round(m.ttft, 3), "prompt_tokens": m.prompt_tokens,
+                         "cached_tokens": getattr(m, "prompt_cached_tokens", 0) or 0,
                          "completion_tokens": m.completion_tokens, "reasoning_tokens": m.reasoning_tokens})
         elif isinstance(m, metrics.TTSMetrics):
             if self._turns and "ttfb" not in self._turns[-1] and "ttft" in self._turns[-1]:
@@ -67,8 +70,11 @@ class CallMetricsLog:
 
     def cost_usd(self) -> float:
         t = self.totals
+        cached = t.get("llm_cached", 0)
         return (t["stt_sec"] * RATES["stt_per_sec"] + t["tts_chars"] * RATES["tts_per_char"]
-                + t["llm_in"] * RATES["llm_in_per_tok"] + t["llm_out"] * RATES["llm_out_per_tok"])
+                + (t["llm_in"] - cached) * RATES["llm_in_per_tok"]
+                + cached * RATES["llm_in_per_tok"] * RATES["llm_cached_share"]
+                + t["llm_out"] * RATES["llm_out_per_tok"])
 
     def close(self) -> None:
         self._write({"event": "call_ended", "totals": self.totals, "cost_usd": round(self.cost_usd(), 5)})

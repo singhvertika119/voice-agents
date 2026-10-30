@@ -49,7 +49,7 @@ async def run_job(job: dict) -> None:
     try:
         pub = await db.fetch_version(agent_id, job["agent_version"])
         cfg = from_dict(agent_id, pub["agent"]["name"], pub["config"])
-        kb = await load_knowledge(cfg.knowledge_sources, tenant)
+        kb = await load_knowledge(cfg.knowledge_sources, tenant, cfg.knowledge_mode)
         ktext = (cfg.knowledge + "\n" + kb.prompt_text).strip()
         if kb.mode == "search":   # big knowledge bases are not in the prompt: sample passages so the judge has the facts
             chunks = await supa.select("kb_chunks", select="content", source_id=f"in.({','.join(kb.source_ids)})", tenant_id=f"eq.{tenant}", limit="40")

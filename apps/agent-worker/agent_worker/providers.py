@@ -9,6 +9,7 @@ import time
 import httpx
 
 from livekit.agents import llm, stt, tts
+from google.genai import types as genai_types
 from livekit.plugins import cartesia, deepgram, google, openai, sarvam
 
 from .config import AgentConfig
@@ -19,7 +20,8 @@ log = logging.getLogger("providers")
 # first waits for the dead provider to fail before the backup takes over (seen: +5 s on the first turn).
 _down_until: dict[str, float] = {}
 DOWN_SECONDS = 600
-TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))   # lower = steadier answers; tuned against the grounding tests
+TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+GEMINI_TIMEOUT_MS = 12_000   # Google's minimum is 10 s   # lower = steadier answers; tuned against the grounding tests
 
 
 def is_down(provider: str) -> bool:
@@ -76,8 +78,11 @@ def _llm(spec: dict, max_tokens: int):
                           api_key=os.environ["GROQ_API_KEY"], temperature=TEMPERATURE,
                           max_completion_tokens=max_tokens, reasoning_effort=spec.get("reasoning_effort", "low"))
     if p == "gemini" and _has("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        # Google refuses a request deadline under 10 s, and the fallback chain gives every model 4 s, so Gemini failed
+        # with HTTP 400 on every call (D-095). Its own HTTP timeout takes precedence over the chain's.
         return google.LLM(model=spec["model"], api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
-                          temperature=TEMPERATURE, max_output_tokens=max_tokens)
+                          temperature=TEMPERATURE, max_output_tokens=max_tokens,
+                          http_options=genai_types.HttpOptions(timeout=GEMINI_TIMEOUT_MS))
     if p == "openai" and _has("OPENAI_API_KEY"):  # switch via YAML once an OpenAI key exists
         return openai.LLM(model=spec["model"], temperature=TEMPERATURE, max_completion_tokens=max_tokens)
     return None
