@@ -54,11 +54,11 @@ def _has(*names: str) -> bool:
 def _stt(spec: dict, lang: str):
     p = spec["provider"]
     if p == "sarvam" and _has("SARVAM_API_KEY") and not is_down("sarvam"):
-        # high_vad_sensitivity makes Sarvam declare the end of an utterance sooner. It was on for speed (D-040), but on
-        # real calls the live text came out chopped and merged while the same audio as whole sentences was right, so
-        # it is off by default now (D-097); the turn detector already decides when the caller has finished.
+        # high_vad_sensitivity makes Sarvam declare the end of an utterance sooner. Off (D-097) the live text was
+        # cleaner but replies were about 0.5 s slower, because the reply waits for Sarvam's final transcript; on again
+        # for speed (D-099). An agent can still turn it off in its STT config.
         return sarvam.STT(language=lang, model=spec["model"], mode=spec.get("mode", "transcribe"),
-                          high_vad_sensitivity=spec.get("high_vad_sensitivity", False))
+                          high_vad_sensitivity=spec.get("high_vad_sensitivity", True))
     if p == "deepgram" and _has("DEEPGRAM_API_KEY"):
         return deepgram.STT(model=spec["model"], language=lang.split("-")[0], sample_rate=16000)
     return None
