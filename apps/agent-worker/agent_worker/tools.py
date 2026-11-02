@@ -46,7 +46,10 @@ Always:
 - For "where are you", "how can I reach or visit you" or "how do I book", give the address and the ways to book or
   contact that the information states. Only say you lack a phone number if the information gives none.
 - Use the business name exactly as written in the information; if none is given, say "we".
-- Keep every reply to one or two short spoken sentences."""
+- Keep every reply to one or two short spoken sentences.
+- Stop when the answer is given. Never end with an offer or check-in such as "Would you like to know anything else?",
+  "Is there anything else I can help with?" or "Let me know if you have questions". Ask a question only when you
+  need something from the caller to help them."""
 
 TOOL_RULES = """
 When to use your tools:
