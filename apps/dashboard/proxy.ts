@@ -16,7 +16,13 @@ export async function proxy(request: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getClaims();
-  const open = ["/login", "/signup", "/forgot-password", "/reset-password", "/auth/confirm"];
+  // Signed-out visitors to the home page see the landing page (app/welcome) at the same address.
+  if (!data?.claims && request.nextUrl.pathname === "/") {
+    const landing = NextResponse.rewrite(new URL("/welcome", request.url));
+    response.cookies.getAll().forEach((c) => landing.cookies.set(c));
+    return landing;
+  }
+  const open = ["/login", "/signup", "/forgot-password", "/reset-password", "/auth/confirm", "/welcome"];
   if (!data?.claims && !open.some((p) => request.nextUrl.pathname.startsWith(p))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
