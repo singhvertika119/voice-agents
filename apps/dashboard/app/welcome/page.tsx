@@ -31,7 +31,7 @@ function Pill({ tone, children }: { tone: "success" | "warning" | "neutral"; chi
 
 function SectionHead({ kicker, title, intro }: { kicker: string; title: string; intro: string }) {
   return (
-    <div className="grid md:grid-cols-2 gap-3.5 md:gap-10 md:items-end mb-11">
+    <div className="grid md:grid-cols-2 gap-3.5 md:gap-10 md:items-end mb-8 md:mb-11">
       <div><span className={`${label} mb-3.5`}>{kicker}</span><h2 className={h2}>{title}</h2></div>
       <p className="text-ink-muted max-w-[34em]">{intro}</p>
     </div>
@@ -39,7 +39,7 @@ function SectionHead({ kicker, title, intro }: { kicker: string; title: string; 
 }
 
 const wrap = "max-w-[1120px] mx-auto px-4 sm:px-6";
-const section = "py-16 md:py-[88px] border-t border-line";
+const section = "py-14 md:py-[88px] border-t border-line";
 
 const STEPS = [
   {
@@ -98,17 +98,17 @@ export default function Welcome() {
       <header className="sticky top-0 z-10 bg-card border-b border-line">
         <div className={`${wrap} h-[60px] flex items-center justify-between gap-4`}>
           <Link href="/" aria-label="Voice Agents home" className="shrink-0 whitespace-nowrap"><Logo /></Link>
-          <nav aria-label="Sections" className="hidden md:flex gap-7 text-sm text-ink-muted">
+          <nav aria-label="Sections" className="hidden lg:flex gap-7 text-sm text-ink-muted whitespace-nowrap">
             <a href="#how" className="hover:text-ink">How it works</a>
             <a href="#features" className="hover:text-ink">What it does</a>
             <a href="#calls" className="hover:text-ink">Call log</a>
             <a href="#faq" className="hover:text-ink">Questions</a>
           </nav>
-          <div className="flex gap-2 items-center">
+          <div className="flex gap-1 sm:gap-2 items-center shrink-0">
             {/* On a phone the bar keeps one button; "Sign in" is a plain link there. */}
             <span className="max-sm:hidden"><ButtonLink href="/login" variant="secondary" className="h-10 whitespace-nowrap">Sign in</ButtonLink></span>
             <Link href="/login" className="sm:hidden text-sm font-medium text-ink-secondary px-2 h-10 inline-flex items-center whitespace-nowrap">Sign in</Link>
-            <ButtonLink href="/signup" className="h-10 px-4 text-sm whitespace-nowrap">Create your agent</ButtonLink>
+            <ButtonLink href="/signup" className="h-10 px-3.5 sm:px-4 text-sm whitespace-nowrap"><span className="sm:hidden">Get started</span><span className="max-sm:hidden">Create your agent</span></ButtonLink>
           </div>
         </div>
       </header>
@@ -127,7 +127,7 @@ export default function Welcome() {
               A phone receptionist that answers in Hindi, English or both, knows your business, and books a callback when a
               person is needed. No code. Set it up in an afternoon.
             </p>
-            <div className="mt-[30px] flex flex-wrap gap-2.5">
+            <div className="mt-[30px] grid grid-cols-1 sm:flex gap-2.5">
               <ButtonLink href="/signup" className="h-12">Create your agent</ButtonLink>
               <ButtonLink href="#how" variant="secondary" className="h-12 px-[22px] text-[15px]">See how it works</ButtonLink>
             </div>
@@ -137,10 +137,10 @@ export default function Welcome() {
         </div>
 
         <div className="py-7 border-t border-line">
-          <div className={`${wrap} flex flex-wrap items-center gap-x-7 gap-y-2.5 text-[15px] text-ink-muted`}>
-            <span className={label}>Made for</span>
+          <div className={`${wrap} flex flex-wrap items-center gap-x-7 gap-y-2.5 text-[15px] text-ink-muted max-sm:gap-x-2`}>
+            <span className={`${label} max-sm:w-full`}>Made for</span>
             {["Clinics", "Coaching institutes", "Online stores", "Real estate", "Service businesses"].map((x) => (
-              <strong key={x} className="font-medium text-ink">{x}</strong>
+              <strong key={x} className="font-medium text-ink max-sm:text-sm max-sm:bg-card max-sm:border max-sm:border-line max-sm:rounded-full max-sm:px-3 max-sm:py-1">{x}</strong>
             ))}
           </div>
         </div>
@@ -197,7 +197,19 @@ export default function Welcome() {
           <div className={wrap}>
             <SectionHead kicker="Call log" title="Every call, written down."
               intro="Read the transcript, play the recording, and see what the caller wanted and how the call ended, without listening to all of it." />
-            <div className="bg-card border border-line rounded-xl overflow-x-auto">
+            <ul className="sm:hidden flex flex-col bg-card border border-line rounded-xl divide-y divide-line">
+              {CALLS.map((c) => (
+                <li key={c.caller} className="p-4 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-[13px] text-ink-muted tabular-nums">{c.caller}</span>
+                    <Pill tone={c.outcome[1]}>{c.outcome[0]}</Pill>
+                  </div>
+                  <p className="text-sm text-ink-secondary">{c.want}</p>
+                  <span className="font-mono text-xs text-ink-faint tabular-nums">{c.length} min</span>
+                </li>
+              ))}
+            </ul>
+            <div className="max-sm:hidden bg-card border border-line rounded-xl overflow-x-auto">
               <table className="w-full min-w-[640px] border-collapse text-sm">
                 <thead>
                   <tr className="bg-muted text-xs text-ink-muted text-left">
@@ -242,7 +254,7 @@ export default function Welcome() {
 
         <section className="pb-16 md:pb-[88px]">
           <div className={wrap}>
-            <div className="bg-ink text-on-ink rounded-xl p-6 py-9 md:p-14 grid md:grid-cols-[1.4fr_1fr] gap-8 items-center">
+            <div className="bg-ink text-on-ink rounded-xl px-5 py-8 md:p-14 grid md:grid-cols-[1.4fr_1fr] gap-8 items-center">
               <div>
                 <h2 className="text-[30px] md:text-[44px] leading-[1.06] font-semibold tracking-[-0.02em] text-balance">Your first agent takes an afternoon.</h2>
                 <p className="mt-3 opacity-70">Write a greeting, upload what you know, and hear it answer.</p>

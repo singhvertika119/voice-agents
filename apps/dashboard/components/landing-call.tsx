@@ -82,7 +82,7 @@ export function LandingCall() {
             <Phone size={16} strokeWidth={2} />
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-semibold">Sunrise Clinic · Front desk</div>
+            <div className="text-sm font-semibold truncate">Sunrise Clinic<span className="max-[380px]:hidden"> · Front desk</span></div>
             <div className="text-xs text-ink-faint font-mono">Example call · Hinglish</div>
           </div>
         </div>
