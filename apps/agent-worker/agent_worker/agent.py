@@ -24,7 +24,7 @@ try:  # imported at the top on purpose: `download-files` only fetches models for
 except Exception:  # package missing: the agent falls back to voice-activity endpointing
     MultilingualModel = None
 
-from . import db, postcall, workspace
+from . import db, postcall, retranscribe, workspace
 from .call_metrics import CallMetricsLog
 from .config import REPO_ROOT, AgentConfig, from_dict, load_agent
 from .custom_tools import load_custom_tools
@@ -229,20 +229,31 @@ async def entrypoint(ctx: JobContext):
                     "structured": {k: s.get(k) for k in ("intent", "outcome", "commitments", "open_items", "language", "name")}}
 
         async def keep_recording() -> dict:
+            """Upload the recording and, from the same local file, re-transcribe the caller (D-097)."""
             if not recorder:
                 return {}
-            stored = await recorder.finish(tenant_id, call_row)
+            callers = [t for t in turns if t["speaker"] == "caller"]
+            stored, better = await recorder.finish(
+                tenant_id, call_row,
+                analyse=lambda path: retranscribe.caller_turn_texts(path, callers, cfg.stt.get("primary") or {}, cfg.language))
+            for t in callers:   # the same dicts the summary reads, so it gets the better text too
+                new = redact(better.get(t["seq"], "")) if better else ""
+                if new and new != t["text"]:
+                    await db.replace_turn_text(call_row, t["seq"], new, t["text"])
+                    t["text"] = new
             extra = {"consent": {**consent, "recording_stored": bool(stored)}}
             if stored:
                 extra["recording_path"], extra["recording_seconds"] = stored
             return extra
 
         extras: dict = {}
-        for r in await asyncio.gather(summarise(), keep_recording(), return_exceptions=True):   # at the same time: the wait is the slower of the two
-            if isinstance(r, dict):
-                extras.update(r)
-            elif isinstance(r, Exception):
-                log.warning("end-of-call step failed: %s", r)
+        # Recording first, because re-transcription improves what the summary and memory are built from; the
+        # re-transcription has its own 30 s limit so this still finishes well inside the 90 s shutdown allowance.
+        for step in (keep_recording, summarise):
+            try:
+                extras.update(await step())
+            except Exception as e:
+                log.warning("end-of-call step failed: %s", e)
         if extras:
             await db.finish_call(call_row, tenant_id, extras, [])
 

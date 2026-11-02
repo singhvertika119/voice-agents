@@ -47,8 +47,9 @@ def object_path(tenant_id: str, call_id: str) -> str:
     return f"{tenant_id}/{call_id}.m4a"
 
 
-async def store(ogg: Path, tenant_id: str, call_id: str) -> tuple[str, float] | None:
-    """Convert, upload, and delete the local files. Returns (object path, seconds) or None. Never raises."""
+async def store(ogg: Path, tenant_id: str, call_id: str, keep_source: bool = False) -> tuple[str, float] | None:
+    """Convert, upload, and delete the local files (the source too unless keep_source). Returns (object path,
+    seconds) or None. Never raises."""
     m4a = ogg.with_suffix(".m4a")
     try:
         if not ogg.exists() or ogg.stat().st_size < 500:
@@ -61,7 +62,7 @@ async def store(ogg: Path, tenant_id: str, call_id: str) -> tuple[str, float] | 
         log.warning("could not store the recording for call %s: %s", call_id, e)
         return None
     finally:
-        for f in (ogg, m4a):
+        for f in ((m4a,) if keep_source else (ogg, m4a)):
             try:
                 f.unlink(missing_ok=True)
             except OSError:
@@ -95,14 +96,23 @@ class CallRecorder:
             self._io = None
             return False
 
-    async def finish(self, tenant_id: str | None, call_id: str | None) -> tuple[str, float] | None:
+    async def finish(self, tenant_id: str | None, call_id: str | None, analyse=None):
+        """Close, upload and delete. `analyse(path)` (optional, async) reads the local file at the same time as the
+        upload, before it is deleted. Returns (stored or None, analyse result or None)."""
         if not self._io:
-            return None
+            return None, None
         try:
             await self._io.aclose()
         except Exception as e:
             log.warning("recorder did not close cleanly: %s", e)
         if not (tenant_id and call_id):
             self._path.unlink(missing_ok=True)   # local mode: keep nothing on disk
-            return None
-        return await store(self._path, tenant_id, call_id)
+            return None, None
+        if analyse is None:
+            return await store(self._path, tenant_id, call_id), None
+        try:
+            stored, result = await asyncio.gather(store(self._path, tenant_id, call_id, keep_source=True),
+                                                  analyse(self._path), return_exceptions=True)
+            return (None if isinstance(stored, BaseException) else stored), (None if isinstance(result, BaseException) else result)
+        finally:
+            self._path.unlink(missing_ok=True)

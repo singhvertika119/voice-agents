@@ -108,6 +108,19 @@ async def add_turn(call_id: str | None, tenant_id: str, turn: dict) -> None:
         log.warning("could not save turn %s of call %s: %s", turn.get("seq"), call_id, e)
 
 
+async def replace_turn_text(call_id: str | None, seq: int, text: str, live_text: str) -> None:
+    """Swap in the re-transcribed text (D-097). The live text is kept in text_live when migration 0008 is applied."""
+    if not call_id:
+        return
+    for payload in ({"text": text, "text_live": live_text}, {"text": text}):
+        try:
+            async with _client() as c:
+                (await c.patch("/call_turns", params={"call_id": f"eq.{call_id}", "seq": f"eq.{seq}"}, json=payload)).raise_for_status()
+            return
+        except Exception as e:
+            log.info("turn %s of call %s: %s", seq, call_id, str(e)[:120])
+
+
 async def fetch_version(agent_id: str, version: int) -> dict:
     """A specific version (used by test runs, which check the exact version a person is about to publish)."""
     async with _client() as c:
