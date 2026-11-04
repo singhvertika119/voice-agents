@@ -8,7 +8,9 @@ ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     PYTHONPATH=/app/apps/agent-worker:/app/apps/ingestion-worker:/app/packages/core:/app
 
+# tesseract-ocr reads scanned PDF pages in English and Hindi (D-108); about 40 MB with the two language packs.
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 ca-certificates \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv
 

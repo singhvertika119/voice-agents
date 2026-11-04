@@ -10,7 +10,7 @@ import logging
 import os
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -37,6 +37,13 @@ STALLED = ("This run stopped making progress (the test runner was restarted or r
            "Run the tests again.")
 STALE_MIN = 10        # no saved progress for this long means nobody is working on a "running" run (D-105)
 CURRENT: dict = {}    # the run this worker is on, so a shutdown can hand it back
+# Nightly checks (D-108): every live agent that took a call in the last week is tested again at 2 am IST, so a score
+# that drops while nobody changed anything (a provider update, an edited website) shows up the next morning.
+NIGHTLY = os.getenv("NIGHTLY_TESTS", "on")           # on (every night) | weekly (Sunday night) | off
+NIGHTLY_RUNS = int(os.getenv("NIGHTLY_RUNS", "1"))    # attempts per scenario; 1 keeps the nightly cost low
+NIGHTLY_HOUR_IST = 2
+NIGHTLY_ACTIVE_DAYS = 7
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 async def claim() -> dict | None:
@@ -49,12 +56,12 @@ async def claim() -> dict | None:
         return r.json()[0] if r.json() else None
 
 
-async def report_progress(run_id: str, stage: str, done: int = 0, total: int = 0, passed: int = 0) -> None:
+async def report_progress(run_id: str, stage: str, done: int = 0, total: int = 0, passed: int = 0, scheduled: bool = False) -> None:
     """Live progress for the Tests tab while a run is going (D-105): which stage, conversations finished, how many of
     those passed, and when it last moved, so a stalled run can be told apart from a slow one. The final report
     replaces it. Never raises."""
     try:
-        await supa.update("eval_runs", {"id": run_id}, {"results": {"progress": {
+        await supa.update("eval_runs", {"id": run_id}, {"results": {"scheduled": scheduled, "progress": {
             "stage": stage, "done": done, "total": total, "passed": passed,
             "updated_at": datetime.now(timezone.utc).isoformat()}}})
     except Exception as e:
@@ -87,7 +94,8 @@ async def knowledge_questions(tenant: str, agent_id: str, ktext: str) -> list[di
 
 async def run_job(job: dict) -> None:
     tenant, agent_id = job["tenant_id"], job["agent_id"]
-    await report_progress(job["id"], "preparing")
+    scheduled = bool((job.get("results") or {}).get("scheduled"))
+    await report_progress(job["id"], "preparing", scheduled=scheduled)
     try:
         pub = await db.fetch_version(agent_id, job["agent_version"])
         cfg = from_dict(agent_id, pub["agent"]["name"], pub["config"])
@@ -108,11 +116,11 @@ async def run_job(job: dict) -> None:
         scenarios += sc.knowledge_scenarios(await knowledge_questions(tenant, agent_id, ktext))
 
         total = len(scenarios) * job["runs_per_scenario"]
-        await report_progress(job["id"], "talking", 0, total)
+        await report_progress(job["id"], "talking", 0, total, scheduled=scheduled)
 
         async def progress(done: int, total: int, passed: int) -> None:
             heartbeat.beat("tests")
-            await report_progress(job["id"], "talking", done, total, passed)
+            await report_progress(job["id"], "talking", done, total, passed, scheduled=scheduled)
 
         report = await run_suite(cfg, kb, scenarios, ktext, runs=job["runs_per_scenario"], settings=settings,
                                  max_reply_ms=MAX_REPLY_MS, concurrency=CONCURRENCY, progress=progress)
@@ -123,7 +131,7 @@ async def run_job(job: dict) -> None:
                     r["transcript"] = r["transcript"][:0]
         await supa.update("eval_runs", {"id": job["id"]}, {
             "status": "done", "passed": report["passed"], "pass_rate": report["pass_rate"], "p95_reply_ms": report["p95_reply_ms"],
-            "results": json.loads(json.dumps(report, default=str)), "finished_at": datetime.now(timezone.utc).isoformat()})
+            "results": json.loads(json.dumps({**report, "scheduled": scheduled}, default=str)), "finished_at": datetime.now(timezone.utc).isoformat()})
         log.info("run %s: %s (%s/%s scenarios, p95 %s ms)", job["id"], "PASSED" if report["passed"] else "FAILED",
                  report["scenarios_passed"], report["scenarios_total"], report["p95_reply_ms"])
     except Exception as e:
@@ -153,6 +161,34 @@ async def close_stalled() -> None:
                 await c.patch("/rest/v1/eval_runs", params={"id": f"eq.{r['id']}", "status": "eq.running"},
                               json={"status": "failed", "error": STALLED, "finished_at": datetime.now(timezone.utc).isoformat()})
             log.warning("closed stalled run %s", r["id"])
+
+
+async def schedule_nightly() -> int:
+    """Queue tonight's checks once 2 am IST has passed (D-108). Safe to call every minute and from more than one
+    worker: an agent that already has a nightly run since 2 am is skipped. Returns how many runs were queued."""
+    if NIGHTLY not in ("on", "weekly"):
+        return 0
+    now = datetime.now(IST)
+    if now.hour < NIGHTLY_HOUR_IST or (NIGHTLY == "weekly" and now.weekday() != 6):
+        return 0
+    since = now.replace(hour=NIGHTLY_HOUR_IST, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+    active_since = (datetime.now(timezone.utc) - timedelta(days=NIGHTLY_ACTIVE_DAYS)).isoformat()
+    agents = await supa.select("agents", select="id,tenant_id,published_version,enabled", published_version="not.is.null")
+    queued = 0
+    for a in agents:
+        if a.get("enabled") is False:
+            continue
+        if not await supa.select("calls", select="id", agent_id=f"eq.{a['id']}", started_at=f"gte.{active_since}", limit="1"):
+            continue
+        if await supa.select("eval_runs", select="id", agent_id=f"eq.{a['id']}", created_at=f"gte.{since}",
+                             **{"results->>scheduled": "eq.true"}, limit="1"):
+            continue
+        await supa.insert("eval_runs", [{"tenant_id": a["tenant_id"], "agent_id": a["id"], "agent_version": a["published_version"],
+                                         "status": "queued", "runs_per_scenario": NIGHTLY_RUNS, "results": {"scheduled": True}}])
+        queued += 1
+    if queued:
+        log.info("queued %d nightly checks", queued)
+    return queued
 
 
 def _hand_back_on_shutdown() -> None:
@@ -187,8 +223,9 @@ async def main() -> None:
             swept = asyncio.get_running_loop().time()
             try:
                 await close_stalled()
+                await schedule_nightly()
             except Exception as e:
-                log.info("stalled-run check failed: %s", e)
+                log.info("stalled-run check or nightly scheduling failed: %s", e)
         try:
             job = await claim()
         except Exception as e:

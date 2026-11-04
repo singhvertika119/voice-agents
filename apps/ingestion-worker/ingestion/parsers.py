@@ -61,6 +61,29 @@ def parse_faq(text: str) -> Parsed:
 
 
 # ---------------------------------------------------------------- PDF
+OCR_LANGS = "eng+hin"     # English and Hindi (Devanagari); Tesseract language packs installed in the server image
+OCR_DPI = 300             # 200 dpi misread Hindi words; 300 read a test page exactly, under a second a page
+OCR_MAX_PAGES = 40
+OCR_PAGE_TIMEOUT_S = 60
+
+
+def ocr_available() -> bool:
+    """Scanned pages are read with Tesseract (D-108). It is installed in the server image and usually not on a laptop,
+    where scanned PDFs keep the old message."""
+    import shutil
+    return shutil.which("tesseract") is not None
+
+
+def _ocr_page(page) -> str:
+    """Render the page and run the tesseract program on it. PyMuPDF's own OCR call was tried first: it read the Hindi
+    letters but dropped the spaces between Hindi words ("रविवारकोक्लिनिकबंदरहताहै"); the program keeps them."""
+    import subprocess
+    png = page.get_pixmap(dpi=OCR_DPI).tobytes("png")
+    out = subprocess.run(["tesseract", "stdin", "stdout", "-l", OCR_LANGS], input=png, capture_output=True,
+                         timeout=OCR_PAGE_TIMEOUT_S, check=True)
+    return out.stdout.decode("utf-8", errors="replace").strip()
+
+
 def parse_pdf(data: bytes) -> Parsed:
     import fitz  # pymupdf
 
@@ -68,23 +91,36 @@ def parse_pdf(data: bytes) -> Parsed:
         doc = fitz.open(stream=data, filetype="pdf")
     except Exception as e:
         raise ParseError("This PDF could not be opened. Upload a different copy.") from e
-    pages, empty_pages = [], []
+    pages, empty_pages, ocr_pages = [], [], []
+    ocr = ocr_available()
     for n, page in enumerate(doc, start=1):
         # Repeated headers/footers: drop lines in the top/bottom 6% of the page.
         h = page.rect.height
         blocks = [b for b in page.get_text("blocks") if b[6] == 0 and h * 0.06 < b[1] < h * 0.94]
         blocks.sort(key=lambda b: (round(b[1] / 8), b[0]))
         text = "\n".join(b[4].strip() for b in blocks).strip()
+        if len(text) < 20 and ocr and len(ocr_pages) < OCR_MAX_PAGES:
+            # No text layer: most likely a scanned page or a photo, so read the image instead.
+            try:
+                text = _ocr_page(page)
+            except Exception:
+                text = ""
+            if len(text) >= 20:
+                ocr_pages.append(n)
         if len(text) < 20:
             empty_pages.append(n)
         else:
             pages.append(text)
     if not pages:
+        if ocr:
+            raise ParseError("No text could be read from this PDF, not even from its page images. If it is a scan, upload a clearer copy, or paste the text.")
         raise ParseError("This PDF has no readable text. It looks like a scanned image. Scanned PDFs are not supported yet; upload a text PDF or paste the text.")
     md = "\n\n".join(pages)
     if _looks_like_legacy_hindi(md):
         raise ParseError("This PDF uses an old Hindi font that comes out as garbled text. Paste the text instead, or re-save it as a new PDF.")
     note = f"\n\n(Pages without text were skipped: {', '.join(map(str, empty_pages))}.)" if empty_pages else ""
+    if ocr_pages:   # in the parsed text the owner can review: a scan can be misread
+        note += f"\n\n(Read from scanned images, so check for misread words: pages {', '.join(map(str, ocr_pages))}.)"
     return Parsed(markdown=_promote_headings(md) + note)
 
 

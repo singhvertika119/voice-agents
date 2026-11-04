@@ -14,7 +14,7 @@ const STATUS = {
   failed: { tone: "danger", label: "Failed" },
 } as const;
 
-type Stats = { chunks?: number; tokens?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
+type Stats = { checked_at?: string; refreshed_at?: string; check_error?: string | null; chunks?: number; tokens?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
 
 export default async function KnowledgePage() {
   const supabase = await supabaseServer();
@@ -58,6 +58,14 @@ export default async function KnowledgePage() {
                         <SourceActions id={s.id} canRetry={s.status === "failed" || s.status === "needs_review"} onRetry={retrySource} onDelete={deleteSource} />
                       </div>
                       {s.error && <p className="text-[13px] text-danger-fg">{s.error}</p>}
+                      {s.source_type === "url" && s.status === "ready" && (
+                        <p className="text-[13px] text-ink-muted">
+                          {/* Websites are re-read weekly and re-indexed when they change (D-108). */}
+                          {stats.checked_at ? `Checked for website changes on ${time(stats.checked_at)}` : "Checked for changes once a week"}
+                          {stats.refreshed_at ? ` · updated from the website on ${time(stats.refreshed_at)}` : ""}
+                          {stats.check_error ? ` · last check: ${stats.check_error} The earlier content is still used.` : ""}
+                        </p>
+                      )}
                       {stats.quality && stats.quality.tested > 0 && (
                         <p className="text-[13px] text-ink-muted">
                           Checked with {stats.quality.tested} test questions: {Math.round(stats.quality.hit_rate * 100)}% found the right passage.

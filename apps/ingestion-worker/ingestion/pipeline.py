@@ -64,46 +64,102 @@ async def load_and_parse(src: dict) -> Parsed:
 
 
 async def process(src: dict) -> None:
-    sid, tenant = src["id"], src["tenant_id"]
+    sid = src["id"]
     try:
         parsed = await load_and_parse(src)
-        chash = hashlib.sha256((parsed.markdown + json.dumps([t.rows for t in parsed.tables], default=str)).encode()).hexdigest()
-        await _status(sid, "indexing", parsed_md=parsed.markdown[:200_000], content_hash=chash)
-
-        chunks = chunk_markdown(parsed.markdown, doc_title=src["name"])
-        if len(chunks) > MAX_CHUNKS:
-            raise ParseError(f"This is very large ({len(chunks)} sections). Split it into smaller documents.")
-        if not chunks and not parsed.tables:
-            raise ParseError("Nothing readable was found in this source.")
-
-        # Rebuild from scratch: indexing is idempotent, so a retry never duplicates chunks.
-        await supa.delete("kb_chunks", {"source_id": sid})
-        await supa.delete("kb_tables", {"source_id": sid})
-        rows = []
-        if chunks:
-            vecs = await embeddings.embed([c.content for c in chunks])
-            rows = [{"tenant_id": tenant, "source_id": sid, "idx": c.idx, "section": c.section, "content": c.content,
-                     "tokens": c.tokens, "embedding": embeddings.to_pg(v)} for c, v in zip(chunks, vecs)]
-            for i in range(0, len(rows), 100):
-                await supa.insert("kb_chunks", rows[i : i + 100])
-        if parsed.tables:
-            await supa.insert("kb_tables", [{"tenant_id": tenant, "source_id": sid, "name": t.name,
-                                             "columns": t.columns, "rows": t.rows} for t in parsed.tables])
-
-        stats = {"chunks": len(chunks), "tokens": sum(c.tokens for c in chunks),
-                 "tables": [{"name": t.name, "rows": len(t.rows)} for t in parsed.tables]}
-        await _status(sid, "testing", stats=stats)
-        quality = await quality_gate(tenant, sid, chunks, faq=parsed.kind == "faq")
-        stats["quality"] = quality
-        ok = quality["tested"] == 0 or quality["hit_rate"] >= HIT_RATE_MIN
-        await _status(sid, "ready" if ok else "needs_review", stats=stats,
-                      error=None if ok else "Some questions about this content did not find the right passage. Review the parsed text and make it clearer.")
-        log.info("source %s -> %s (%d chunks, hit rate %s)", sid, "ready" if ok else "needs_review", len(chunks), quality.get("hit_rate"))
+        await index(src, parsed)
     except ParseError as e:
         await _status(sid, "failed", error=str(e))
     except Exception:
         log.exception("ingestion failed for %s", sid)
         await _status(sid, "failed", error="Something went wrong while processing this source. Try again, and contact support if it keeps happening.")
+
+
+def content_hash(parsed: Parsed) -> str:
+    return hashlib.sha256((parsed.markdown + json.dumps([t.rows for t in parsed.tables], default=str)).encode()).hexdigest()
+
+
+async def index(src: dict, parsed: Parsed, live: bool = False) -> None:
+    """Chunk, embed, store and test a parsed source. live=True is a refresh of a source agents are already using
+    (D-108): the status stays "ready" until the end instead of passing through indexing/testing, so calls keep the
+    source, and everything that can fail (chunking, embedding) happens before the old sections are removed."""
+    sid, tenant = src["id"], src["tenant_id"]
+    chash = content_hash(parsed)
+    if not live:
+        await _status(sid, "indexing", parsed_md=parsed.markdown[:200_000], content_hash=chash)
+
+    chunks = chunk_markdown(parsed.markdown, doc_title=src["name"])
+    if len(chunks) > MAX_CHUNKS:
+        raise ParseError(f"This is very large ({len(chunks)} sections). Split it into smaller documents.")
+    if not chunks and not parsed.tables:
+        raise ParseError("Nothing readable was found in this source.")
+    vecs = await embeddings.embed([c.content for c in chunks]) if chunks else []
+
+    # Rebuild from scratch: indexing is idempotent, so a retry never duplicates chunks.
+    await supa.delete("kb_chunks", {"source_id": sid})
+    await supa.delete("kb_tables", {"source_id": sid})
+    if chunks:
+        rows = [{"tenant_id": tenant, "source_id": sid, "idx": c.idx, "section": c.section, "content": c.content,
+                 "tokens": c.tokens, "embedding": embeddings.to_pg(v)} for c, v in zip(chunks, vecs)]
+        for i in range(0, len(rows), 100):
+            await supa.insert("kb_chunks", rows[i : i + 100])
+    if parsed.tables:
+        await supa.insert("kb_tables", [{"tenant_id": tenant, "source_id": sid, "name": t.name,
+                                         "columns": t.columns, "rows": t.rows} for t in parsed.tables])
+
+    stats = {"chunks": len(chunks), "tokens": sum(c.tokens for c in chunks),
+             "tables": [{"name": t.name, "rows": len(t.rows)} for t in parsed.tables]}
+    if live:
+        now = datetime.now(timezone.utc).isoformat()
+        stats.update(checked_at=now, refreshed_at=now)
+    else:
+        await _status(sid, "testing", stats=stats)
+    quality = await quality_gate(tenant, sid, chunks, faq=parsed.kind == "faq")
+    stats["quality"] = quality
+    ok = quality["tested"] == 0 or quality["hit_rate"] >= HIT_RATE_MIN
+    extra = {"parsed_md": parsed.markdown[:200_000], "content_hash": chash} if live else {}
+    problem = ("The website changed and some questions about the new content did not find the right passage. Review the parsed text."
+               if live else "Some questions about this content did not find the right passage. Review the parsed text and make it clearer.")
+    await _status(sid, "ready" if ok else "needs_review", stats=stats, error=None if ok else problem, **extra)
+    log.info("source %s -> %s (%d chunks, hit rate %s)%s", sid, "ready" if ok else "needs_review", len(chunks),
+             quality.get("hit_rate"), " after a website change" if live else "")
+
+
+# ------------------------------------------------------------------ website refresh
+REFRESH_DAYS = int(os.getenv("WEBSITE_REFRESH_DAYS", "7"))
+
+
+def _days_since(iso: str | None) -> float:
+    if not iso:
+        return 1e9
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(iso.replace("Z", "+00:00"))).total_seconds() / 86400
+
+
+async def refresh_websites() -> int:
+    """Re-read website sources not checked for REFRESH_DAYS (D-108). Unchanged: only the check time is saved. Changed:
+    re-indexed in place (see index(live=True)); agents' saved test questions follow automatically, because they are
+    tied to a fingerprint of the knowledge. Site unreachable or unreadable: the old content stays and the problem is
+    noted. Returns how many sources changed."""
+    rows = await supa.select("knowledge_sources", select="id,tenant_id,name,source_type,url,content_hash,stats,updated_at",
+                             source_type="eq.url", status="eq.ready")
+    changed = 0
+    for src in rows:
+        stats = src.get("stats") or {}
+        if _days_since(stats.get("checked_at") or src["updated_at"]) < REFRESH_DAYS:
+            continue
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            parsed = await load_and_parse(src)
+            if content_hash(parsed) == src.get("content_hash"):
+                await supa.update("knowledge_sources", {"id": src["id"]}, {"stats": {**stats, "checked_at": now, "check_error": None}})
+                continue
+            await index(src, parsed, live=True)
+            changed += 1
+        except Exception as e:
+            msg = str(e) if isinstance(e, ParseError) else "The website could not be read this time."
+            log.info("website refresh skipped for %s: %s", src["id"], str(e)[:120])
+            await supa.update("knowledge_sources", {"id": src["id"]}, {"stats": {**stats, "checked_at": now, "check_error": msg}})
+    return changed
 
 
 # ------------------------------------------------------------------ quality gate

@@ -14,7 +14,7 @@ load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 from vp_core import heartbeat, supa  # noqa: E402
 
-from .pipeline import claim_next, process  # noqa: E402
+from .pipeline import claim_next, process, refresh_websites  # noqa: E402
 
 log = logging.getLogger("ingest")
 
@@ -67,10 +67,23 @@ async def purge_loop() -> None:
         await asyncio.sleep(3600)
 
 
+async def refresh_loop() -> None:
+    """Hourly: re-read website sources that have not been checked for a week (D-108)."""
+    while True:
+        try:
+            n = await refresh_websites()
+            if n:
+                log.info("website refresh: %d sources changed and were re-indexed", n)
+        except Exception as e:
+            log.info("website refresh skipped: %s", str(e)[:120])
+        await asyncio.sleep(3600)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     await reset_stuck()
     asyncio.create_task(purge_loop())
+    asyncio.create_task(refresh_loop())
     log.info("ingestion worker waiting for sources")
     while True:
         heartbeat.beat("ingestion")

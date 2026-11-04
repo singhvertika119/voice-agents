@@ -12,7 +12,7 @@ import { clearKnowledgeQuestions, deleteScenario, queueTests, setAgentEnabled } 
 
 type Scenario = { name: string; source: string; runs: number; pass_rate: number; required: number; passed: boolean; results: { run: number; passed: boolean; fixed: Record<string, boolean>; judge: { reason?: string }; transcript: { speaker: string; text: string }[]; error?: string | null }[] };
 type Progress = { stage: "preparing" | "talking"; done: number; total: number; passed: number; updated_at: string };
-type RunRow = { id: string; agent_version: number; status: string; passed: boolean | null; pass_rate: number | null; p95_reply_ms: number | null; results: { scenarios?: Scenario[]; scenarios_passed?: number; scenarios_total?: number; note?: string; progress?: Progress } | null; error: string | null; created_at: string };
+type RunRow = { id: string; agent_version: number; status: string; passed: boolean | null; pass_rate: number | null; p95_reply_ms: number | null; results: { scenarios?: Scenario[]; scenarios_passed?: number; scenarios_total?: number; note?: string; progress?: Progress; scheduled?: boolean } | null; error: string | null; created_at: string };
 
 const NICE: Record<string, string> = {
   no_error: "no technical error", agent_replied: "agent replied", says_expected_words: "gave the expected answer", avoids_forbidden_words: "avoided forbidden words",
@@ -57,6 +57,13 @@ export default async function AgentBuilder({
   // A run nobody has picked up for a few minutes means no test runner is on (D-103); say so instead of "Waiting" forever.
   const notPicked = (r: RunRow) => r.status === "queued" && waitedMinutes(r.created_at) >= 3;
   const stuck = runs.some(notPicked);
+  // A nightly check that scores lower than the previous nightly check of the same version: nothing in the version
+  // changed, so a provider, the website or the saved questions did (D-108).
+  const dropFor = (r: RunRow) => {
+    if (!r.results?.scheduled || r.status !== "done" || r.pass_rate == null) return null;
+    const prev = runs.find((x) => x.created_at < r.created_at && x.results?.scheduled && x.status === "done" && x.agent_version === r.agent_version && x.pass_rate != null);
+    return prev && prev.pass_rate! - r.pass_rate >= 0.1 ? prev : null;
+  };
   const generated = (scenarioRows ?? []).filter((s) => (s.spec as { source?: string })?.source === "generated" && s.agent_id === id);
   const own = (scenarioRows ?? []).filter((s) => (s.spec as { source?: string })?.source !== "generated");
 
@@ -153,7 +160,7 @@ export default async function AgentBuilder({
                   <Card className="p-5 flex flex-col gap-3">
                     <h2 className="text-base font-semibold">Test conversations</h2>
                     <p className="text-sm leading-[1.55] text-ink-secondary">
-                      An AI plays a caller and talks to this agent many times: asking for a person, asking things it should not know, trying to trick it, and asking the questions in your knowledge. Each answer is checked. Run this before you publish a change.
+                      An AI plays a caller and talks to this agent many times: asking for a person, asking things it should not know, trying to trick it, and asking the questions in your knowledge. Each answer is checked. Run this before you publish a change. The live version is also checked every night at 2 am when it took calls that week.
                     </p>
                     <div className="flex flex-wrap items-center gap-3">
                       {latest && <RunButton label={`Run tests on version ${latest.version}`} run={queueTests.bind(null, id, latest.version)} />}
@@ -177,6 +184,7 @@ export default async function AgentBuilder({
                           <div className="flex flex-col gap-1">
                             <span className="text-sm font-semibold flex flex-wrap items-center gap-2">
                               Version {r.agent_version}
+                              {r.results?.scheduled && <Badge>Nightly check</Badge>}
                               {r.status === "done" ? <Badge tone={r.passed ? "success" : "danger"}>{r.passed ? "Passed" : "Failed"}</Badge> : r.status === "failed" ? <Badge tone="danger">Could not run</Badge> : <Badge tone={notPicked(r) ? "warning" : "neutral"}>{r.status === "queued" ? (notPicked(r) ? "Not started" : "Waiting") : "Running"}</Badge>}
                             </span>
                             <span className="font-mono text-xs text-ink-muted">
@@ -185,6 +193,15 @@ export default async function AgentBuilder({
                             </span>
                           </div>
                         </div>
+                        {(() => {
+                          const prev = dropFor(r);
+                          return prev && (
+                            <p role="status" className="px-5 py-3 text-[13px] bg-warning-bg text-warning-fg">
+                              Score fell from {Math.round(prev.pass_rate! * 100)}% to {Math.round(r.pass_rate! * 100)}% since the last nightly check, and this version was not changed.
+                              Something around it changed: the AI or voice provider, a website in its knowledge, or its test questions. Open the failed tests below to see what it now gets wrong.
+                            </p>
+                          );
+                        })()}
                         {(r.status === "running" || (r.status === "queued" && !notPicked(r))) && <RunProgress run={r} />}
                         {r.error && <p className="px-5 py-3 text-[13px] text-danger-fg">{r.error}</p>}
                         {r.results?.scenarios && (

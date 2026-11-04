@@ -20,4 +20,5 @@ services:
       - {key: GEMINI_API_KEY, sync: false}
       - {key: TOOL_SECRET_KEY, sync: false}
       - {key: RUN_TEST_WORKER, value: "1"}   # test conversations from the dashboard run here (peak ~0.6 GB measured)
-      - {key: EVAL_CONCURRENCY, value: "2"}
+      - {key: EVAL_CONCURRENCY, value: "3"}   # three conversations at a time (D-108)
+      - {key: NIGHTLY_TESTS, value: "on"}     # on | weekly | off: re-test live agents with calls that week at 2 am IST
