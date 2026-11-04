@@ -23,7 +23,7 @@ class AgentConfig:
     turn_detection: str = "vad"
     knowledge_sources: list = field(default_factory=list)
     tool_ids: list = field(default_factory=list)   # custom tools (tools.id), pinned per version
-    knowledge_mode: str = "search"                  # auto | prompt | search (knowledge.load_knowledge); search by default (D-099)
+    knowledge_mode: str = "auto"                    # auto | prompt | search (knowledge.load_knowledge); auto again (D-102)
 
     @property
     def system_prompt(self) -> str:

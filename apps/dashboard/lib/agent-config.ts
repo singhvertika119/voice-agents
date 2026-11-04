@@ -6,7 +6,7 @@ export type AgentConfig = {
   knowledge: string;            // free-text notes added to the prompt
   knowledge_sources?: string[]; // ids of uploaded sources (knowledge_sources.id), pinned per version
   tool_ids?: string[];          // custom tools (tools.id) this agent may use, pinned per version
-  knowledge_mode?: "auto" | "prompt" | "search"; // how uploaded sources reach the model (D-099): search = per question
+  knowledge_mode?: "auto" | "prompt" | "search"; // how uploaded sources reach the model: auto = whole document when small, searched when large (D-102)
   wizard?: { type: string; details?: { name: string; address: string; hours: string; reasons: string; languages: string[] } }; // setup wizard answers, ignored by the worker
   voice: { tts_primary: Record<string, string>; tts_fallback: Record<string, string> };
   stt: { primary: Record<string, string>; fallback: Record<string, string> };
@@ -44,7 +44,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
     max_tokens: 200,
   },
   turn_detection: "multilingual",
-  knowledge_mode: "search",
+  knowledge_mode: "auto",
 };
 
 // Text in [square brackets] is a template placeholder the owner must replace before the agent goes live.
