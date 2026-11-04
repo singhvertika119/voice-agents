@@ -96,6 +96,20 @@ async def run_job(job: dict) -> None:
     tenant, agent_id = job["tenant_id"], job["agent_id"]
     scheduled = bool((job.get("results") or {}).get("scheduled"))
     await report_progress(job["id"], "preparing", scheduled=scheduled)
+    check = {"at": 0.0, "stopped": False}
+
+    async def stopped() -> bool:
+        """Was this run stopped from the dashboard (D-109)? Looked up at most every 5 seconds."""
+        loop = asyncio.get_running_loop()
+        if not check["stopped"] and loop.time() - check["at"] > 5:
+            check["at"] = loop.time()
+            try:
+                rows = await supa.select("eval_runs", select="status", id=f"eq.{job['id']}")
+                check["stopped"] = not rows or rows[0]["status"] != "running"
+            except Exception:
+                pass
+        return check["stopped"]
+
     try:
         pub = await db.fetch_version(agent_id, job["agent_version"])
         cfg = from_dict(agent_id, pub["agent"]["name"], pub["config"])
@@ -115,15 +129,22 @@ async def run_job(job: dict) -> None:
             pass
         scenarios += sc.knowledge_scenarios(await knowledge_questions(tenant, agent_id, ktext))
 
+        if await stopped():
+            log.info("run %s stopped before it started talking", job["id"])
+            return
         total = len(scenarios) * job["runs_per_scenario"]
         await report_progress(job["id"], "talking", 0, total, scheduled=scheduled)
 
         async def progress(done: int, total: int, passed: int) -> None:
             heartbeat.beat("tests")
-            await report_progress(job["id"], "talking", done, total, passed, scheduled=scheduled)
+            if not await stopped():
+                await report_progress(job["id"], "talking", done, total, passed, scheduled=scheduled)
 
         report = await run_suite(cfg, kb, scenarios, ktext, runs=job["runs_per_scenario"], settings=settings,
-                                 max_reply_ms=MAX_REPLY_MS, concurrency=CONCURRENCY, progress=progress)
+                                 max_reply_ms=MAX_REPLY_MS, concurrency=CONCURRENCY, progress=progress, should_stop=stopped)
+        if await stopped():   # the dashboard already marked it "Stopped"; do not overwrite that with a partial score
+            log.info("run %s stopped from the dashboard", job["id"])
+            return
         # Keep the stored report small: full transcripts only for runs that failed.
         for s in report["scenarios"]:
             for r in s["results"]:

@@ -8,7 +8,8 @@ import { TestPanel } from "@/components/test-panel";
 import { AgentEditor, type SourceOption, type ToolOption } from "@/components/agent-editor";
 import { AddScenarioForm, AutoRefresh, RunButton, SmallButton } from "@/components/tests-ui";
 import { deleteAgent, publish } from "../actions";
-import { clearKnowledgeQuestions, deleteScenario, queueTests, setAgentEnabled } from "../test-runs";
+import { clearKnowledgeQuestions, deleteScenario, queueTests, setAgentEnabled, stopRun } from "../test-runs";
+import { STOPPED } from "@/lib/test-runs";
 
 type Scenario = { name: string; source: string; runs: number; pass_rate: number; required: number; passed: boolean; results: { run: number; passed: boolean; fixed: Record<string, boolean>; judge: { reason?: string }; transcript: { speaker: string; text: string }[]; error?: string | null }[] };
 type Progress = { stage: "preparing" | "talking"; done: number; total: number; passed: number; updated_at: string };
@@ -185,13 +186,16 @@ export default async function AgentBuilder({
                             <span className="text-sm font-semibold flex flex-wrap items-center gap-2">
                               Version {r.agent_version}
                               {r.results?.scheduled && <Badge>Nightly check</Badge>}
-                              {r.status === "done" ? <Badge tone={r.passed ? "success" : "danger"}>{r.passed ? "Passed" : "Failed"}</Badge> : r.status === "failed" ? <Badge tone="danger">Could not run</Badge> : <Badge tone={notPicked(r) ? "warning" : "neutral"}>{r.status === "queued" ? (notPicked(r) ? "Not started" : "Waiting") : "Running"}</Badge>}
+                              {r.status === "done" ? <Badge tone={r.passed ? "success" : "danger"}>{r.passed ? "Passed" : "Failed"}</Badge> : r.status === "failed" ? (r.error === STOPPED ? <Badge>Stopped</Badge> : <Badge tone="danger">Could not run</Badge>) : <Badge tone={notPicked(r) ? "warning" : "neutral"}>{r.status === "queued" ? (notPicked(r) ? "Not started" : "Waiting") : "Running"}</Badge>}
                             </span>
                             <span className="font-mono text-xs text-ink-muted">
                               {time(r.created_at)}
                               {r.status === "done" && r.results ? ` · ${r.results.scenarios_passed}/${r.results.scenarios_total} scenarios passed · slowest 5% of replies ${r.p95_reply_ms != null ? (r.p95_reply_ms / 1000).toFixed(1) + " s" : "-"}` : ""}
                             </span>
                           </div>
+                          {(r.status === "queued" || r.status === "running") && (
+                            <SmallButton label="Stop" run={stopRun.bind(null, id, r.id)} confirmText="Stop this test run? Conversations already in progress finish first; the rest are skipped and no score is given." />
+                          )}
                         </div>
                         {(() => {
                           const prev = dropFor(r);
@@ -203,7 +207,7 @@ export default async function AgentBuilder({
                           );
                         })()}
                         {(r.status === "running" || (r.status === "queued" && !notPicked(r))) && <RunProgress run={r} />}
-                        {r.error && <p className="px-5 py-3 text-[13px] text-danger-fg">{r.error}</p>}
+                        {r.error && <p className={`px-5 py-3 text-[13px] ${r.error === STOPPED ? "text-ink-muted" : "text-danger-fg"}`}>{r.error}</p>}
                         {r.results?.scenarios && (
                           <ul>
                             {r.results.scenarios.map((s, i) => (

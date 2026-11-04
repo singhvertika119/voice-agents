@@ -21,7 +21,7 @@ def p95(xs: list[int]) -> int | None:
 
 async def run_suite(cfg: AgentConfig, kb: KnowledgeBase, scenarios: list[dict], knowledge_text: str, *,
                     runs: int | None = None, settings: dict | None = None, concurrency: int = 3,
-                    max_reply_ms: int = 3000, progress=None) -> dict:
+                    max_reply_ms: int = 3000, progress=None, should_stop=None) -> dict:
     sem = asyncio.Semaphore(concurrency)
     all_reply_ms: list[int] = []
     jobs = [(s, i) for s in scenarios for i in range(runs or s["runs"])]
@@ -31,6 +31,9 @@ async def run_suite(cfg: AgentConfig, kb: KnowledgeBase, scenarios: list[dict], 
     async def one(s: dict, i: int) -> dict:
         nonlocal done, passed
         async with sem:
+            if should_stop and await should_stop():   # stopped from the dashboard: skip the conversations not yet started
+                return {"run": i + 1, "passed": False, "skipped": True, "fixed": {}, "judge": {"reason": "stopped"},
+                        "transcript": [], "tool_calls": [], "reply_ms": []}
             try:
                 convo = await run_conversation(cfg, kb, s, settings)
                 fixed = fixed_checks(convo, s["checks"])

@@ -1,8 +1,10 @@
 "use server";
 
+import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
+import { STOPPED } from "@/lib/test-runs";
 
 export type ScenarioState = { ok: boolean; message: string; at: number } | null;
 
@@ -36,6 +38,22 @@ export async function addScenario(agentId: string, _prev: ScenarioState, formDat
 export async function deleteScenario(agentId: string, id: string) {
   const supabase = await supabaseServer();
   await supabase.from("eval_scenarios").delete().eq("id", id);
+  revalidatePath(`/agents/${agentId}`);
+}
+
+// Stops a waiting or running test run (D-109). Users may not update eval_runs directly (only the test worker writes
+// results), so access is checked with the user's own session (row-level security: a member of the workspace with an
+// editing role) and the change is made with the server key. The worker sees the status change and stops starting
+// new conversations; the ones already talking finish within about half a minute.
+export async function stopRun(agentId: string, runId: string) {
+  const supabase = await supabaseServer();
+  const { data: run } = await supabase.from("eval_runs").select("id,tenant_id,status").eq("id", runId).single();
+  if (!run || !["queued", "running"].includes(run.status)) return;
+  const { data: me } = await supabase.from("tenant_members").select("role").eq("tenant_id", run.tenant_id).limit(1).single();
+  if (!["owner", "admin", "editor"].includes(me?.role ?? "")) return;
+  const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+  await admin.from("eval_runs").update({ status: "failed", error: STOPPED, finished_at: new Date().toISOString() })
+    .eq("id", runId).in("status", ["queued", "running"]);
   revalidatePath(`/agents/${agentId}`);
 }
 
