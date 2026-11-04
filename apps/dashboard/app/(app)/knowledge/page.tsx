@@ -96,7 +96,7 @@ export default async function KnowledgePage() {
           )}
         </div>
         <aside className="flex-[1_1_320px] min-w-0">
-          <AskBox />
+          <AskBox sources={(sources ?? []).filter((s) => s.status === "ready").map((s) => ({ id: s.id, name: s.name }))} />
         </aside>
       </div>
     </>

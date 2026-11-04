@@ -43,7 +43,7 @@ export default async function KnowledgeStep({ searchParams }: { searchParams: Pr
             </Card>
           )}
         </div>
-        <aside className="flex-[1_1_320px] min-w-0"><AskBox /></aside>
+        <aside className="flex-[1_1_320px] min-w-0"><AskBox sources={(sources ?? []).filter((s) => s.status === "ready").map((s) => ({ id: s.id, name: s.name }))} /></aside>
       </div>
       {error && <p role="alert" className="text-[13px] text-danger-fg">{error}</p>}
       <form action={finishKnowledge.bind(null, agent)} className="mt-auto flex flex-col">
