@@ -26,9 +26,10 @@ async def run_suite(cfg: AgentConfig, kb: KnowledgeBase, scenarios: list[dict], 
     all_reply_ms: list[int] = []
     jobs = [(s, i) for s in scenarios for i in range(runs or s["runs"])]
     done = 0
+    passed = 0
 
     async def one(s: dict, i: int) -> dict:
-        nonlocal done
+        nonlocal done, passed
         async with sem:
             try:
                 convo = await run_conversation(cfg, kb, s, settings)
@@ -40,8 +41,12 @@ async def run_suite(cfg: AgentConfig, kb: KnowledgeBase, scenarios: list[dict], 
                        "tool_calls": [], "reply_ms": [], "error": f"{type(e).__name__}: {e}"}
         all_reply_ms.extend(res["reply_ms"])
         done += 1
+        passed += bool(res["passed"])
         if progress:
-            await progress(done, len(jobs))
+            try:
+                await progress(done, len(jobs), passed)
+            except Exception:   # progress is for the dashboard only; it must never fail a run
+                pass
         return res
 
     t0 = time.time()

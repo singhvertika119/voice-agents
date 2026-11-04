@@ -8,10 +8,12 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +33,10 @@ MAX_REPLY_MS = 3000
 # Conversations run at the same time. Each one holds an agent session in memory; three together peaked at about
 # 506 MB on a 3-minute run, which is over the 512 MB free Render instance (docs/decision.md D-094). Render sets RENDER.
 CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "1" if os.getenv("RENDER") else "3"))
-INTERRUPTED = "The test worker stopped during this run (on the free server this is usually running out of memory). Run the tests again."
+STALLED = ("This run stopped making progress (the test runner was restarted or ran out of memory while running it). "
+           "Run the tests again.")
+STALE_MIN = 10        # no saved progress for this long means nobody is working on a "running" run (D-105)
+CURRENT: dict = {}    # the run this worker is on, so a shutdown can hand it back
 
 
 async def claim() -> dict | None:
@@ -44,8 +49,21 @@ async def claim() -> dict | None:
         return r.json()[0] if r.json() else None
 
 
+async def report_progress(run_id: str, stage: str, done: int = 0, total: int = 0, passed: int = 0) -> None:
+    """Live progress for the Tests tab while a run is going (D-105): which stage, conversations finished, how many of
+    those passed, and when it last moved, so a stalled run can be told apart from a slow one. The final report
+    replaces it. Never raises."""
+    try:
+        await supa.update("eval_runs", {"id": run_id}, {"results": {"progress": {
+            "stage": stage, "done": done, "total": total, "passed": passed,
+            "updated_at": datetime.now(timezone.utc).isoformat()}}})
+    except Exception as e:
+        log.info("progress not saved: %s", e)
+
+
 async def run_job(job: dict) -> None:
     tenant, agent_id = job["tenant_id"], job["agent_id"]
+    await report_progress(job["id"], "preparing")
     try:
         pub = await db.fetch_version(agent_id, job["agent_version"])
         cfg = from_dict(agent_id, pub["agent"]["name"], pub["config"])
@@ -64,8 +82,15 @@ async def run_job(job: dict) -> None:
             pass
         scenarios += await sc.from_knowledge(ktext, 4)
 
+        total = len(scenarios) * job["runs_per_scenario"]
+        await report_progress(job["id"], "talking", 0, total)
+
+        async def progress(done: int, total: int, passed: int) -> None:
+            heartbeat.beat("tests")
+            await report_progress(job["id"], "talking", done, total, passed)
+
         report = await run_suite(cfg, kb, scenarios, ktext, runs=job["runs_per_scenario"], settings=settings,
-                                 max_reply_ms=MAX_REPLY_MS, concurrency=CONCURRENCY)
+                                 max_reply_ms=MAX_REPLY_MS, concurrency=CONCURRENCY, progress=progress)
         # Keep the stored report small: full transcripts only for runs that failed.
         for s in report["scenarios"]:
             for r in s["results"]:
@@ -82,15 +107,63 @@ async def run_job(job: dict) -> None:
                                                              "finished_at": datetime.now(timezone.utc).isoformat()})
 
 
+def _minutes_since(iso: str | None) -> float:
+    if not iso:
+        return 1e9
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(iso.replace("Z", "+00:00"))).total_seconds() / 60
+
+
+async def close_stalled() -> None:
+    """Close "running" runs nobody is working on (D-105). A deploy starts the new server before stopping the old one,
+    so a run can be claimed by the old one and then lost; a crash leaves one behind too. Progress is saved after
+    every conversation, so 10 minutes without any means it is dead. It is closed as failed, not re-queued: re-queuing
+    a run that crashed the worker made it crash again after every restart (the October crash loop)."""
+    rows = await supa.select("eval_runs", select="id,created_at,results", status="eq.running")
+    for r in rows:
+        if r["id"] == CURRENT.get("id"):
+            continue
+        last = ((r.get("results") or {}).get("progress") or {}).get("updated_at") or r["created_at"]
+        if _minutes_since(last) >= STALE_MIN:
+            async with supa.client() as c:
+                await c.patch("/rest/v1/eval_runs", params={"id": f"eq.{r['id']}", "status": "eq.running"},
+                              json={"status": "failed", "error": STALLED, "finished_at": datetime.now(timezone.utc).isoformat()})
+            log.warning("closed stalled run %s", r["id"])
+
+
+def _hand_back_on_shutdown() -> None:
+    """On SIGTERM (Render stopping this server for a deploy or restart), put the run in progress back in the queue so
+    the next server picks it up at once. An out-of-memory kill is SIGKILL and never reaches here, so a run that
+    crashes the worker is not retried forever; close_stalled closes it instead."""
+    def handler(signum, frame):
+        run_id = CURRENT.get("id")
+        if run_id:
+            url, key = os.environ["SUPABASE_URL"].rstrip("/"), os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+            try:
+                httpx.patch(f"{url}/rest/v1/eval_runs", params={"id": f"eq.{run_id}", "status": "eq.running"},
+                            json={"status": "queued", "results": None}, timeout=5,
+                            headers={"apikey": key, "Authorization": f"Bearer {key}"})
+                log.info("shutting down: run %s handed back to the queue", run_id)
+            except Exception as e:
+                log.warning("shutting down: could not hand back run %s (%s)", run_id, e)
+        os._exit(0)
+    try:
+        signal.signal(signal.SIGTERM, handler)
+    except (ValueError, AttributeError):   # not the main thread, or a platform without SIGTERM: keep the default
+        pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    # A run still "running" at start means the worker died during it. Re-queuing it made the worker crash on the same
-    # run after every restart (a crash loop), so it is closed as failed with a reason the dashboard shows.
-    async with supa.client() as c:
-        await c.patch("/rest/v1/eval_runs", params={"status": "eq.running"},
-                      json={"status": "failed", "error": INTERRUPTED, "finished_at": datetime.now(timezone.utc).isoformat()})
+    _hand_back_on_shutdown()
     log.info("test worker waiting for runs")
+    swept = 0.0
     while True:
+        if asyncio.get_running_loop().time() - swept > 60:
+            swept = asyncio.get_running_loop().time()
+            try:
+                await close_stalled()
+            except Exception as e:
+                log.info("stalled-run check failed: %s", e)
         try:
             job = await claim()
         except Exception as e:
@@ -100,7 +173,11 @@ async def main() -> None:
         heartbeat.beat("tests")
         if job:
             log.info("running tests for agent %s v%s", job["agent_id"], job["agent_version"])
-            await run_job(job)
+            CURRENT["id"] = job["id"]
+            try:
+                await run_job(job)
+            finally:
+                CURRENT.pop("id", None)
         else:
             await asyncio.sleep(3)
 

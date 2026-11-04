@@ -11,7 +11,8 @@ import { deleteAgent, publish } from "../actions";
 import { deleteScenario, queueTests, setAgentEnabled } from "../test-runs";
 
 type Scenario = { name: string; source: string; runs: number; pass_rate: number; required: number; passed: boolean; results: { run: number; passed: boolean; fixed: Record<string, boolean>; judge: { reason?: string }; transcript: { speaker: string; text: string }[]; error?: string | null }[] };
-type RunRow = { id: string; agent_version: number; status: string; passed: boolean | null; pass_rate: number | null; p95_reply_ms: number | null; results: { scenarios?: Scenario[]; scenarios_passed?: number; scenarios_total?: number; note?: string } | null; error: string | null; created_at: string };
+type Progress = { stage: "preparing" | "talking"; done: number; total: number; passed: number; updated_at: string };
+type RunRow = { id: string; agent_version: number; status: string; passed: boolean | null; pass_rate: number | null; p95_reply_ms: number | null; results: { scenarios?: Scenario[]; scenarios_passed?: number; scenarios_total?: number; note?: string; progress?: Progress } | null; error: string | null; created_at: string };
 
 const NICE: Record<string, string> = {
   no_error: "no technical error", agent_replied: "agent replied", says_expected_words: "gave the expected answer", avoids_forbidden_words: "avoided forbidden words",
@@ -154,7 +155,7 @@ export default async function AgentBuilder({
                     </p>
                     <div className="flex flex-wrap items-center gap-3">
                       {latest && <RunButton label={`Run tests on version ${latest.version}`} run={queueTests.bind(null, id, latest.version)} />}
-                      {running && !stuck && <span className="text-[13px] text-ink-muted">Running. This usually takes a few minutes.</span>}
+                      {running && !stuck && <span className="text-[13px] text-ink-muted">A run takes about 5 to 10 minutes. You can leave this page; the result is saved here.</span>}
                     </div>
                   </Card>
 
@@ -182,6 +183,7 @@ export default async function AgentBuilder({
                             </span>
                           </div>
                         </div>
+                        {(r.status === "running" || (r.status === "queued" && !notPicked(r))) && <RunProgress run={r} />}
                         {r.error && <p className="px-5 py-3 text-[13px] text-danger-fg">{r.error}</p>}
                         {r.results?.scenarios && (
                           <ul>
@@ -248,4 +250,42 @@ export default async function AgentBuilder({
 
 function waitedMinutes(iso: string) {
   return (Date.now() - new Date(iso).getTime()) / 60_000;
+}
+
+// Live progress for a run in progress (D-105). The worker saves it after every finished conversation, and the page
+// refreshes every few seconds, so the bar moves while the run goes. No movement for 5 minutes is called out, so a
+// stopped runner is not mistaken for a slow one.
+function RunProgress({ run }: { run: RunRow }) {
+  const p = run.results?.progress;
+  const started = waitedMinutes(run.created_at);
+  const quiet = p ? waitedMinutes(p.updated_at) : started;
+  const pct = p && p.total ? Math.round((p.done / p.total) * 100) : 0;
+  const left = p && p.done > 0 && p.total > p.done ? Math.max(1, Math.round(((started / p.done) * (p.total - p.done)))) : null;
+  const step = run.status === "queued"
+    ? "Waiting for the test runner to pick this up. This usually takes a few seconds."
+    : !p || p.stage === "preparing"
+      ? "Getting ready: loading this version and writing test questions from your knowledge."
+      : `${p.done} of ${p.total} test conversations finished${p.done ? ` · ${p.passed} passed so far` : ""}`;
+  return (
+    <div className="px-5 py-4 flex flex-col gap-2.5" role="status" aria-live="polite">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-[13px]">
+        <span className="text-ink-secondary">{step}</span>
+        <span className="font-mono text-xs text-ink-muted tabular-nums">
+          {run.status === "running" ? `started ${minutes(started)} ago${left ? ` · about ${left} min left` : ""}` : ""}
+        </span>
+      </div>
+      <div className="h-1.5 rounded-full bg-muted overflow-hidden" aria-hidden>
+        <div className={`h-full rounded-full bg-ink transition-[width] duration-700 ${!p || p.stage === "preparing" ? "w-1/12 animate-pulse" : ""}`} style={p?.stage === "talking" ? { width: `${Math.max(pct, 2)}%` } : undefined} />
+      </div>
+      {run.status === "running" && quiet >= 5 ? (
+        <p className="text-[13px] text-warning-fg">No progress for {minutes(quiet)}. The test runner may have stopped; if this does not move in a few minutes, run the tests again.</p>
+      ) : (
+        <p className="text-xs text-ink-muted">An AI caller is talking to this version and every answer is checked. You can leave this page; the result is saved here.</p>
+      )}
+    </div>
+  );
+}
+
+function minutes(m: number) {
+  return m < 1 ? "under a minute" : `${Math.round(m)} min`;
 }
