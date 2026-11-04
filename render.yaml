@@ -7,7 +7,7 @@ services:
     runtime: docker
     dockerfilePath: ./deploy/background.Dockerfile
     dockerContext: .
-    plan: free
+    plan: standard             # 2 GB: room for the test worker (D-104); free/starter (512 MB) cannot run tests
     region: singapore          # the closest Render region to India
     healthCheckPath: /healthz
     autoDeploy: true
@@ -19,3 +19,5 @@ services:
       - {key: GROQ_API_KEY, sync: false}
       - {key: GEMINI_API_KEY, sync: false}
       - {key: TOOL_SECRET_KEY, sync: false}
+      - {key: RUN_TEST_WORKER, value: "1"}   # test conversations from the dashboard run here (peak ~0.6 GB measured)
+      - {key: EVAL_CONCURRENCY, value: "2"}

@@ -53,6 +53,9 @@ export default async function AgentBuilder({
   const runs = (runRows ?? []) as RunRow[];
   const latestRunFor = (v: number) => runs.find((r) => r.agent_version === v);
   const running = runs.some((r) => r.status === "queued" || r.status === "running");
+  // A run nobody has picked up for a few minutes means no test runner is on (D-103); say so instead of "Waiting" forever.
+  const notPicked = (r: RunRow) => r.status === "queued" && waitedMinutes(r.created_at) >= 3;
+  const stuck = runs.some(notPicked);
 
   return (
     <>
@@ -151,10 +154,17 @@ export default async function AgentBuilder({
                     </p>
                     <div className="flex flex-wrap items-center gap-3">
                       {latest && <RunButton label={`Run tests on version ${latest.version}`} run={queueTests.bind(null, id, latest.version)} />}
-                      {running && <span className="text-[13px] text-ink-muted">Running. This takes a few minutes. The test worker window must be open.</span>}
+                      {running && !stuck && <span className="text-[13px] text-ink-muted">Running. This usually takes a few minutes.</span>}
                     </div>
                   </Card>
 
+                  {stuck && (
+                    <p role="status" className="px-3 py-2.5 rounded-md bg-warning-bg text-warning-fg text-[13px] leading-[1.55]">
+                      A test run has been waiting for more than 3 minutes, so the test runner is not on. It runs on the background
+                      server when that server has enough memory (setting RUN_TEST_WORKER=1), or on your computer with
+                      scripts/run-evals.ps1. Waiting runs start by themselves as soon as it is on; nothing is lost.
+                    </p>
+                  )}
                   {runs.length === 0 ? (
                     <Card className="p-5 text-sm text-ink-muted">No test runs yet.</Card>
                   ) : (
@@ -164,7 +174,7 @@ export default async function AgentBuilder({
                           <div className="flex flex-col gap-1">
                             <span className="text-sm font-semibold flex flex-wrap items-center gap-2">
                               Version {r.agent_version}
-                              {r.status === "done" ? <Badge tone={r.passed ? "success" : "danger"}>{r.passed ? "Passed" : "Failed"}</Badge> : r.status === "failed" ? <Badge tone="danger">Could not run</Badge> : <Badge>{r.status === "queued" ? "Waiting" : "Running"}</Badge>}
+                              {r.status === "done" ? <Badge tone={r.passed ? "success" : "danger"}>{r.passed ? "Passed" : "Failed"}</Badge> : r.status === "failed" ? <Badge tone="danger">Could not run</Badge> : <Badge tone={notPicked(r) ? "warning" : "neutral"}>{r.status === "queued" ? (notPicked(r) ? "Not started" : "Waiting") : "Running"}</Badge>}
                             </span>
                             <span className="font-mono text-xs text-ink-muted">
                               {time(r.created_at)}
@@ -234,4 +244,8 @@ export default async function AgentBuilder({
       </div>
     </>
   );
+}
+
+function waitedMinutes(iso: string) {
+  return (Date.now() - new Date(iso).getTime()) / 60_000;
 }
