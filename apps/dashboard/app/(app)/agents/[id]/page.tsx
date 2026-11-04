@@ -8,7 +8,7 @@ import { TestPanel } from "@/components/test-panel";
 import { AgentEditor, type SourceOption, type ToolOption } from "@/components/agent-editor";
 import { AddScenarioForm, AutoRefresh, RunButton, SmallButton } from "@/components/tests-ui";
 import { deleteAgent, publish } from "../actions";
-import { deleteScenario, queueTests, setAgentEnabled } from "../test-runs";
+import { clearKnowledgeQuestions, deleteScenario, queueTests, setAgentEnabled } from "../test-runs";
 
 type Scenario = { name: string; source: string; runs: number; pass_rate: number; required: number; passed: boolean; results: { run: number; passed: boolean; fixed: Record<string, boolean>; judge: { reason?: string }; transcript: { speaker: string; text: string }[]; error?: string | null }[] };
 type Progress = { stage: "preparing" | "talking"; done: number; total: number; passed: number; updated_at: string };
@@ -41,7 +41,7 @@ export default async function AgentBuilder({
     onEditor ? supabase.from("tools").select("id,name,description,enabled,requires_confirmation").order("name") : nothing,
     onVersions ? supabase.from("tenant_members").select("role").limit(1).single() : nothing,
     onVersions || onTests ? supabase.from("eval_runs").select("id,agent_version,status,passed,pass_rate,p95_reply_ms,results,error,created_at").eq("agent_id", id).order("created_at", { ascending: false }).limit(10) : nothing,
-    onTests ? supabase.from("eval_scenarios").select("id,name,spec").or(`agent_id.eq.${id},agent_id.is.null`).order("created_at", { ascending: false }) : nothing,
+    onTests ? supabase.from("eval_scenarios").select("id,name,spec,agent_id").or(`agent_id.eq.${id},agent_id.is.null`).order("created_at", { ascending: false }) : nothing,
   ]);
   if (!agent) notFound();
   const latest = versions?.[0];
@@ -57,6 +57,8 @@ export default async function AgentBuilder({
   // A run nobody has picked up for a few minutes means no test runner is on (D-103); say so instead of "Waiting" forever.
   const notPicked = (r: RunRow) => r.status === "queued" && waitedMinutes(r.created_at) >= 3;
   const stuck = runs.some(notPicked);
+  const generated = (scenarioRows ?? []).filter((s) => (s.spec as { source?: string })?.source === "generated" && s.agent_id === id);
+  const own = (scenarioRows ?? []).filter((s) => (s.spec as { source?: string })?.source !== "generated");
 
   return (
     <>
@@ -220,11 +222,38 @@ export default async function AgentBuilder({
                     ))
                   )}
 
-                  {(scenarioRows?.length ?? 0) > 0 && (
+                  <Card className="overflow-hidden">
+                    <CardHeader
+                      title="Questions from your knowledge"
+                      caption={generated.length
+                        ? "Written once from this agent's knowledge and asked in every run, so scores can be compared between versions. A new set is written when the knowledge changes."
+                        : "The next test run writes these from this agent's knowledge and keeps them for later runs."}
+                      action={generated.length ? <SmallButton label="Write new questions" run={clearKnowledgeQuestions.bind(null, id)} confirmText="Remove these questions? The next test run writes a new set, so its score will not be comparable with earlier runs." /> : undefined}
+                    />
+                    {generated.length > 0 && (
+                      <ul>
+                        {generated.map((s) => {
+                          const g = s.spec as { kind?: string; question?: string };
+                          const kind = g.kind === "answerable" ? ["Should answer", "success"] : g.kind === "unanswerable" ? ["Not in knowledge", "neutral"] : ["Wrong claim to correct", "warning"];
+                          return (
+                            <li key={s.id} className="px-5 py-3 border-b border-line-subtle last:border-b-0 flex items-center justify-between gap-3 text-sm">
+                              <span className="flex flex-col gap-1 min-w-0">
+                                <span><Badge tone={kind[1] as "success" | "neutral" | "warning"}>{kind[0]}</Badge></span>
+                                <span className="break-words">{g.question}</span>
+                              </span>
+                              <SmallButton label="Remove" run={deleteScenario.bind(null, id, s.id)} confirmText="Remove this question from future test runs?" />
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </Card>
+
+                  {own.length > 0 && (
                     <Card className="overflow-hidden">
                       <CardHeader title="Your own tests" />
                       <ul>
-                        {scenarioRows!.map((s) => (
+                        {own.map((s) => (
                           <li key={s.id} className="px-5 py-3 border-b border-line-subtle last:border-b-0 flex items-center justify-between gap-3 text-sm">
                             <span>{s.name}<span className="block text-[13px] text-ink-muted">{(s.spec as { caller_says?: string }).caller_says}</span></span>
                             <SmallButton label="Delete" run={deleteScenario.bind(null, id, s.id)} confirmText="Delete this test?" />

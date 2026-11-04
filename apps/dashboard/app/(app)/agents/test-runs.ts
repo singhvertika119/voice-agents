@@ -39,6 +39,13 @@ export async function deleteScenario(agentId: string, id: string) {
   revalidatePath(`/agents/${agentId}`);
 }
 
+// Removes the saved questions written from the agent's knowledge; the next test run writes a new set (D-107).
+export async function clearKnowledgeQuestions(agentId: string) {
+  const supabase = await supabaseServer();
+  await supabase.from("eval_scenarios").delete().eq("agent_id", agentId).eq("spec->>source", "generated");
+  revalidatePath(`/agents/${agentId}`);
+}
+
 export async function setAgentEnabled(agentId: string, enabled: boolean) {
   const supabase = await supabaseServer();
   await supabase.from("agents").update({ enabled }).eq("id", agentId);

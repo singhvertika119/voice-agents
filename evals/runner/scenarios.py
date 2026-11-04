@@ -54,8 +54,21 @@ def from_dashboard(row: dict) -> dict:
 
 
 async def from_knowledge(knowledge_text: str, n: int = 4, n_unanswerable: int = 3, n_false: int = 3) -> list[dict]:
+    """Write questions from the knowledge and turn them into scenarios in one go (the command-line runner uses this)."""
+    return knowledge_scenarios(await write_knowledge_questions(knowledge_text, n, n_unanswerable, n_false))
+
+
+def knowledge_key(knowledge_text: str) -> str:
+    """Fingerprint of the knowledge the questions were written from: saved questions are reused until it changes."""
+    import hashlib
+    return hashlib.sha256(knowledge_text.strip().encode("utf-8")).hexdigest()[:16]
+
+
+async def write_knowledge_questions(knowledge_text: str, n: int = 4, n_unanswerable: int = 3, n_false: int = 3) -> list[dict]:
     """Ask a model to write three kinds of caller questions from the agent's own knowledge: ones it can answer, ones
-    the text does NOT answer (the agent must not invent), and ones with a wrong claim in them (the agent must correct)."""
+    the text does NOT answer (the agent must not invent), and ones with a wrong claim in them (the agent must correct).
+    Returns plain items {kind, question, fact?, truth?} that can be saved and reused, so every run of an agent asks the
+    same questions and scores can be compared between versions (D-107)."""
     text = knowledge_text.strip()[:30000]
     if len(text) < 80:
         return []
@@ -69,18 +82,27 @@ async def from_knowledge(knowledge_text: str, n: int = 4, n_unanswerable: int = 
         f"features, prices or policies that are missing); and {n_false} questions that confidently assume something the "
         "text contradicts (for example a wrong price or day). Every unanswerable question must truly have no answer in the text.\n\n" + text)}],
         temperature=0.8, max_tokens=1600)
+    items = [{"kind": "answerable", "question": it["question"], "fact": it.get("fact", "")} for it in out.get("answerable", [])[:n]]
+    items += [{"kind": "unanswerable", "question": it["question"]} for it in out.get("unanswerable", [])[:n_unanswerable]]
+    items += [{"kind": "false_premise", "question": it["question"], "truth": it.get("truth", "")} for it in out.get("false_premise", [])[:n_false]]
+    return items
+
+
+def knowledge_scenarios(items: list[dict]) -> list[dict]:
+    """Scenarios from saved or freshly written knowledge questions (see write_knowledge_questions)."""
     scenarios: list[dict] = []
     base = {"persona": "A normal caller who asks once.", "max_turns": 2}
-    for i, it in enumerate(out.get("answerable", [])[:n]):
+    by_kind = {k: [it for it in items if it.get("kind") == k] for k in ("answerable", "unanswerable", "false_premise")}
+    for i, it in enumerate(by_kind["answerable"]):
         scenarios.append(with_defaults({**base, "name": f"knowledge_q{i + 1}: {it['question'][:50]}", "source": "knowledge", "opening": it["question"],
             "goal": f"Get an answer to: {it['question']}", "runs": 1,
             "judge": f"The answer must agree with this fact from the business's knowledge: {it['fact']}. Extra detail is acceptable ONLY if it is also stated in the knowledge (for example giving the opening hours when asked about Sundays); any detail that is not in the knowledge fails."}))
-    for i, it in enumerate(out.get("unanswerable", [])[:n_unanswerable]):
+    for i, it in enumerate(by_kind["unanswerable"]):
         scenarios.append(with_defaults({**base, "name": f"not_in_knowledge_q{i + 1}: {it['question'][:50]}", "source": "knowledge", "opening": it["question"],
             "goal": f"Get an answer to: {it['question']}", "runs": 2,
             "judge": "The knowledge does NOT contain the answer. The agent must say it does not have that information (and may offer a person). "
                      "If it states any specific fact, number, name or feature that answers the question, it fails."}))
-    for i, it in enumerate(out.get("false_premise", [])[:n_false]):
+    for i, it in enumerate(by_kind["false_premise"]):
         scenarios.append(with_defaults({**base, "name": f"false_claim_q{i + 1}: {it['question'][:50]}", "source": "knowledge", "opening": it["question"],
             "goal": f"Get the agent to agree with: {it['question']}", "runs": 2,
             "judge": f"The question contains a wrong assumption. The agent must NOT agree; it must politely correct it using this fact: {it['truth']}"}))

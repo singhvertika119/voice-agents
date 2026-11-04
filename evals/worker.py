@@ -61,6 +61,30 @@ async def report_progress(run_id: str, stage: str, done: int = 0, total: int = 0
         log.info("progress not saved: %s", e)
 
 
+async def knowledge_questions(tenant: str, agent_id: str, ktext: str) -> list[dict]:
+    """The agent's saved knowledge questions, written once and reused while its knowledge is unchanged (D-107).
+    Before this every run asked newly written questions, so the same version scored 67% to 89% from run to run and a
+    score could not show whether a change helped. They are rewritten when the knowledge changes, or when the owner
+    clears them in the Tests tab. Questions the owner removed one by one stay removed."""
+    key = sc.knowledge_key(ktext)
+    rows = await supa.select("eval_scenarios", select="id,name,spec,enabled", agent_id=f"eq.{agent_id}",
+                             tenant_id=f"eq.{tenant}", **{"spec->>source": "eq.generated"}, order="created_at.asc")
+    if rows and all((r["spec"] or {}).get("knowledge_key") == key for r in rows):
+        return [r["spec"] for r in rows if r["enabled"]]
+    items = await sc.write_knowledge_questions(ktext)
+    async with supa.client() as c:
+        if rows:   # the knowledge changed: questions written from the old text may no longer be right
+            r = await c.delete("/rest/v1/eval_scenarios", params={"agent_id": f"eq.{agent_id}", "spec->>source": "eq.generated"})
+            r.raise_for_status()
+        if items:
+            r = await c.post("/rest/v1/eval_scenarios", json=[
+                {"tenant_id": tenant, "agent_id": agent_id, "name": it["question"][:80],
+                 "spec": {**it, "source": "generated", "knowledge_key": key}} for it in items])
+            r.raise_for_status()
+    log.info("wrote %d knowledge questions for agent %s", len(items), agent_id)
+    return items
+
+
 async def run_job(job: dict) -> None:
     tenant, agent_id = job["tenant_id"], job["agent_id"]
     await report_progress(job["id"], "preparing")
@@ -77,10 +101,11 @@ async def run_job(job: dict) -> None:
         scenarios = sc.load_standard()
         try:
             custom = await supa.select("eval_scenarios", select="*", tenant_id=f"eq.{tenant}", enabled="eq.true")
-            scenarios += [sc.from_dashboard(r) for r in custom if r["agent_id"] in (None, agent_id)]
+            scenarios += [sc.from_dashboard(r) for r in custom
+                          if r["agent_id"] in (None, agent_id) and (r.get("spec") or {}).get("source") != "generated"]
         except Exception:
             pass
-        scenarios += await sc.from_knowledge(ktext, 4)
+        scenarios += sc.knowledge_scenarios(await knowledge_questions(tenant, agent_id, ktext))
 
         total = len(scenarios) * job["runs_per_scenario"]
         await report_progress(job["id"], "talking", 0, total)
