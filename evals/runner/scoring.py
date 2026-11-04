@@ -83,6 +83,12 @@ async def judge(convo: dict, scenario: dict, knowledge_text: str) -> dict:
         f"Rubric for this test: {scenario.get('judge') or 'The agent helps correctly, briefly and politely.'}\n\n"
         f"The ONLY facts the agent is allowed to state (its knowledge):\n{knowledge_text[:30000] or '(none given)'}\n\n"
         f"Conversation:\n{lines}\n\nTools the agent used: {tools}\n\n"
+        # The judge failed correct answers: "closed in the evening" for 9 am to 12 noon hours, a channel list that is in
+        # the knowledge word for word, and a correct "yes" to a caller's accurate summary (D-106).
+        "Before calling something invented, search the knowledge for it: a fact stated anywhere in it is grounded. "
+        "A plain consequence of a stated fact is grounded too (hours of 9 am to 12 noon mean closed in the evening). "
+        "Agreeing with a caller's summary is fine when the summary is accurate; it is a failure only when the summary "
+        "adds something the knowledge does not state.\n\n"
         'Return JSON: {"meets_rubric": bool, "grounded": bool (no invented facts beyond the knowledge; greetings and '
         'offers of help are fine), "tone": 1-5, '
         '"reason": "one short sentence"}'

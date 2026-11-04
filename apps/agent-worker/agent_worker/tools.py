@@ -27,7 +27,9 @@ CONVERSATION_RULES = """
 Always:
 - Reply in the language of the caller's most recent message: English gets English, Hindi in Roman letters gets
   Roman Hinglish, Devanagari gets Devanagari.
-- If the caller is vague or unsure what they want, ask exactly one short clarifying question before saying you do not know.
+- If the caller is vague or unsure what they want, your FIRST reply is one short question about what they mean. Do not
+  say you do not know and do not offer a person or a callback until you have asked that question. This comes before
+  any instruction to say you do not have information.
 - You cannot connect a call to a person live. Offer a callback from the team instead.
 - For a broad question such as "what do you do" or "tell me about yourselves", give a two-sentence summary of the
   main things you know instead of saying you have no information.
@@ -41,6 +43,12 @@ Always:
   them as the same; say what you know in the information's own words.
 - If the caller assumes something the information contradicts or does not support (a price, a time, a name, a feature),
   never agree. Politely give the correct fact, or say you do not have it.
+- When the caller sums up or restates what you said ("so you cover all boards?", "so only on weekdays?", "right?"),
+  never answer just "yes". Confirm only the part the information states and say plainly what it does not state, for
+  example "We support CBSE, ICSE, State, IB and IGCSE; I cannot say about other boards." A summary that adds even one
+  detail (all, only, daily, every, never, weekdays) is not a yes.
+- When you turn down a false or unsupported claim, do not repeat the claim's words; say "I cannot offer that" or give
+  the correct fact.
 - If the caller pushes back on a fact you gave ("but I was told 1000"), stay calm and repeat the fact from the information
   once more. Do not retreat to "I do not know" about something you just answered, and do not give in.
 - For "where are you", "how can I reach or visit you" or "how do I book", give the address and the ways to book or
@@ -83,6 +91,28 @@ def normalize_phone(raw: str | None) -> str | None:
     if len(digits) == 11 and digits.startswith("0"):
         digits = digits[1:]
     return f"+91{digits}" if re.fullmatch(r"[6-9]\d{9}", digits) else None
+
+
+_DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+
+
+def read_back(context, e164: str) -> bool | None:
+    """Did one of the agent's last two replies contain this number's digits? The model sets confirmed=true itself and
+    sometimes did so without reading the number back (D-106), so the tool checks the conversation. None when the
+    conversation cannot be read (then the confirmed flag alone decides, as before)."""
+    try:
+        items = context.session.history.items
+    except Exception:
+        return None
+    replies = [m for m in items if getattr(m, "role", None) == "assistant" and getattr(m, "text_content", None)]
+    if not replies:
+        return False
+    want = e164[-10:]
+    for m in replies[-2:]:
+        digits = re.sub(r"\D", "", m.text_content.translate(_DEVANAGARI_DIGITS))
+        if want in digits:
+            return True
+    return False
 
 
 def within_hours(settings: dict | None, now: datetime | None = None) -> bool:
@@ -184,12 +214,21 @@ def builtin_tools(state: CallState, backend: Backend) -> list:
         if not e164:
             logged("schedule_callback", False, t0, problem="invalid_number")
             return "That is not a valid 10-digit mobile number. Ask the caller to say it again, digit by digit."
+        if read_back(context, e164) is False:
+            logged("schedule_callback", False, t0, problem="not_read_back")
+            return ("Not booked yet. You have not read this number back. Read it to the caller digit by digit, ask if it "
+                    "is right, and call this again with confirmed=true only after they say yes.")
         await backend.create_callback(state, e164, preferred_time.strip()[:80], reason.strip()[:200])
         state.callback_booked = True
         logged("schedule_callback", True, t0)
-        pref = f" You may say only that you noted their preference ({preferred_time.strip()}). Never say the team WILL call at that time, tomorrow or on any day." if preferred_time.strip() else ""
-        return ("The callback is booked. Tell the caller the team will call them back." + pref +
-                " Do not promise a time. Ask if there is anything else.")
+        # The model kept turning a preferred time into a promise ("team kal subah call karegi") when only told not
+        # to (D-106), so it gets the sentence to say instead.
+        pref = preferred_time.strip()
+        say = "Your number is noted and our team will call you back."
+        if pref:
+            say += f" I have also noted that you prefer {pref}."
+        return (f"The callback is booked. Say exactly this, in the caller's language, and nothing else about when: \"{say}\" "
+                "Then ask if there is anything else.")
 
     @function_tool
     async def end_call(context: RunContext) -> str:
