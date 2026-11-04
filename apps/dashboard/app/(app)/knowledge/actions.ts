@@ -149,25 +149,35 @@ export async function chatKnowledge(sourceId: string, history: ChatTurn[]): Prom
       if (!r.ok) throw new Error("chat failed");
       return { answer: (await r.json()).choices?.[0]?.message?.content?.trim() || "Ji.", passages: [] };
     }
-    // A short follow-up ("aur fees?") means little alone, so the previous question is searched with it.
+    // The question is always searched on its own. A follow-up ("aur Sunday ko?") means little alone, so when there was
+    // an earlier question it is also searched together with it, and the two result lists are merged. Searching only
+    // the combined text lost new short questions: after a fees question, "Where is the office?" found fee passages
+    // and the answer was "could not find" (D-114).
     const prevUser = turns.slice(0, -1).filter((t) => t.role === "user").at(-1)?.content ?? "";
-    const searchText = question.split(/\s+/).length < 6 && prevUser ? `${prevUser}\n${question}` : question;
+    const texts = prevUser ? [question, `${prevUser}\n${question}`] : [question];
     const emb = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST", headers, body: JSON.stringify({ model: "text-embedding-3-small", input: searchText }),
+      method: "POST", headers, body: JSON.stringify({ model: "text-embedding-3-small", input: texts }),
     });
     if (!emb.ok) throw new Error("embedding failed");
-    const vec: number[] = (await emb.json()).data[0].embedding;
-    const { data, error } = await supabase.rpc("match_chunks", {
+    const vecs: number[][] = (await emb.json()).data.map((d: { embedding: number[] }) => d.embedding);
+    type Row = { id: string; section: string | null; content: string; source_id: string };
+    const results = await Promise.all(vecs.map((vec, i) => supabase.rpc("match_chunks", {
       p_sources: sources.map((s) => s.id),
       p_embedding: `[${vec.join(",")}]`,
-      p_query: question,
+      p_query: question,   // the keyword half needs every word to match, so the combined text would rarely match anything
       p_k: 5,
-    });
-    if (error) throw error;
+    })));
+    const failed = results.find((r) => r.error);
+    if (failed) throw failed.error;
+    const [own, withPrev = []] = results.map((r) => (r.data ?? []) as Row[]);
+    // Top 4 from the question alone, then up to 2 more from the follow-up search, without repeats.
+    const rows: Row[] = [];
+    for (const r of [...own.slice(0, 4), ...withPrev, ...own.slice(4)]) {
+      if (rows.length >= 6) break;
+      if (!rows.some((x) => x.id === r.id)) rows.push(r);
+    }
     const names = Object.fromEntries(sources.map((s) => [s.id, s.name]));
-    const passages: Passage[] = (data ?? []).map((r: { section: string | null; content: string; source_id: string }) => ({
-      section: r.section, content: r.content, source: names[r.source_id] ?? "",
-    }));
+    const passages: Passage[] = rows.map((r) => ({ section: r.section, content: r.content, source: names[r.source_id] ?? "" }));
     const context = passages.length
       ? passages.map((p, i) => `[${i + 1}] (${p.source}${p.section ? `, ${p.section}` : ""})\n${p.content}`).join("\n\n")
       : "(no passage matched)";
