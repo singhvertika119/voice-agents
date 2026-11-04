@@ -30,9 +30,18 @@ CORE_SECTION = re.compile(r"\((?:/[^)/]*)*/(?:contact|about|locations?|offices?|
 
 # Small talk needs no documents: searching for "okay" or "thank you" only delays the reply (D-111).
 _SMALL_TALK = set("""ok okay okk haan han ha haa hmm hmmm ji ha-ji theek thik thikhai hai acha accha achha sahi
-yes no nahi nope sure fine great cool right hello hi hey helo bye goodbye alvida thanks thank you thankyou shukriya
+yes no nahi nope sure fine great cool nice good perfect awesome wow right hello hi hey helo bye goodbye alvida thanks thank you thankyou shukriya
 dhanyavaad dhanyawad please sorry wait ruko main mein mai bas namaste got it understood samajh gaya gayi
 ठीक है हाँ हां हा जी अच्छा सही नहीं ना हेलो हलो बाय धन्यवाद शुक्रिया नमस्ते ओके हम्म बस समझ गया गई""".split())
+
+
+_NOT_ACK = set("hello hi hey helo bye goodbye alvida namaste हेलो हलो बाय नमस्ते".split())
+
+
+def is_acknowledgement(text: str) -> bool:
+    """Small talk that only acknowledges ("okay", "haan", "nice", "ठीक है"), not a greeting or a goodbye."""
+    words = re.findall(r"[\wऀ-ॣ०-ॿ]+", text.lower())
+    return is_small_talk(text) and not any(w in _NOT_ACK for w in words)
 
 
 def is_small_talk(text: str) -> bool:

@@ -8,7 +8,7 @@ from livekit.agents import Agent
 
 from .config import AgentConfig
 from .language import language_hint, set_tts_language, tts_language
-from .knowledge import KnowledgeBase, make_lookup_tool
+from .knowledge import KnowledgeBase, is_acknowledgement, make_lookup_tool
 from .normalize import normalize_for_speech
 from .tools import CONVERSATION_RULES, TOOL_RULES
 
@@ -36,6 +36,12 @@ class VoiceAgent(Agent):
         hint = language_hint(caller_text)
         if hint:
             extra.append(("system", hint))
+        if is_acknowledgement(caller_text):
+            # A general "no closing offers" rule (D-098) was not enough: an "OK" still got "Thank you! If you have any
+            # more questions, feel free to ask." An instruction for this turn only is followed (D-112).
+            extra.append(("system", "The caller only acknowledged what you said. Reply with one to three words in their "
+                                    "language, such as \"Ji.\", \"Sure.\" or \"Theek hai.\". Do not thank them and do "
+                                    "not offer more help. If you had asked them something, ask it again briefly instead."))
         found = await self.kb.retrieve(caller_text)
         if found is not None:
             if found:

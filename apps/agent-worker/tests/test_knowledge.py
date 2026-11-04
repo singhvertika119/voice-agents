@@ -63,3 +63,11 @@ def test_retrieve_skips_small_talk():
     import asyncio
     kb = KnowledgeBase(mode="search")
     assert asyncio.run(kb.retrieve("okay")) is None
+
+
+def test_acknowledgements_are_not_greetings():
+    from agent_worker.knowledge import is_acknowledgement
+    for t in ["OK", "Okay", "हम्म Nice", "ठीक है।", "haan ji"]:
+        assert is_acknowledgement(t), t
+    for t in ["Hello", "bye", "Is integrations available", "namaste"]:
+        assert not is_acknowledgement(t), t
