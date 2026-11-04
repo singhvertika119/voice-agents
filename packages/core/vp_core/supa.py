@@ -4,9 +4,12 @@ The service role bypasses row-level security, so callers must always scope queri
 """
 from __future__ import annotations
 
+import asyncio
 import os
 
 import httpx
+
+_pool: dict = {}   # one open connection pool per event loop (D-110)
 
 
 def _env() -> tuple[str, str]:
@@ -21,11 +24,25 @@ def client(timeout: float = 20) -> httpx.AsyncClient:
     )
 
 
+def pooled() -> httpx.AsyncClient:
+    """A client that stays open and is reused, so a request does not pay for a new connection. The database is in
+    Seoul and a new secure connection costs several round trips: a plain lookup took 0.6 to 0.7 s that way, which is
+    most of the 2 s a call allows for a knowledge search. Kept per event loop, because a client cannot move between
+    loops (scripts and tests start a new loop each time)."""
+    loop = asyncio.get_running_loop()
+    entry = _pool.get("c")
+    if entry is None or entry[0] is not loop or entry[1].is_closed:
+        url, key = _env()
+        c = httpx.AsyncClient(base_url=url, timeout=20, limits=httpx.Limits(max_keepalive_connections=10, keepalive_expiry=60),
+                              headers={"apikey": key, "Authorization": f"Bearer {key}", "Prefer": "return=representation"})
+        _pool["c"] = (loop, c)
+    return _pool["c"][1]
+
+
 async def select(table: str, **params) -> list[dict]:
-    async with client() as c:
-        r = await c.get(f"/rest/v1/{table}", params=params)
-        r.raise_for_status()
-        return r.json()
+    r = await pooled().get(f"/rest/v1/{table}", params=params)
+    r.raise_for_status()
+    return r.json()
 
 
 async def insert(table: str, rows: list[dict] | dict) -> list[dict]:
@@ -49,10 +66,9 @@ async def delete(table: str, match: dict) -> None:
 
 
 async def rpc(fn: str, args: dict, timeout: float = 20) -> list[dict]:
-    async with client(timeout) as c:
-        r = await c.post(f"/rest/v1/rpc/{fn}", json=args)
-        r.raise_for_status()
-        return r.json()
+    r = await pooled().post(f"/rest/v1/rpc/{fn}", json=args, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 
 async def download(bucket: str, path: str) -> bytes:

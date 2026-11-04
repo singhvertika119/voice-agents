@@ -42,7 +42,10 @@ class VoiceAgent(Agent):
                 msg = "Passages from the business's documents that may answer the caller's last question:\n" + found
             else:
                 msg = "No passage in the documents matched the caller's last question. Say you do not have that information."
-            extra.append(("assistant", msg))
+            # As a system message, not an assistant one: given the contact passage as its own earlier words, the model
+            # said "phone number nahi pata" 9 times in 9 while reading the hours from the same passage; as a system
+            # message it gave "+91 806 940 9217" 3 times in 3 (D-110).
+            extra.append(("system", msg))
         return extra
 
     def speak_in(self, code: str) -> None:

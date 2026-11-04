@@ -27,6 +27,7 @@ class Parsed:
     markdown: str = ""
     tables: list[Table] = field(default_factory=list)
     kind: str = "text"  # text | faq
+    pages: list[str] = field(default_factory=list)   # website sources: the addresses that were read
 
 
 # ---------------------------------------------------------------- text / FAQ
@@ -236,43 +237,9 @@ def _tables_overview(tables: list[Table]) -> str:
 
 # ---------------------------------------------------------------- web page
 def parse_html(html: str) -> Parsed:
-    import trafilatura
-
-    # favor_recall keeps FAQ and secondary sections that favor_precision drops (measured on a real site: +35% text).
-    md = trafilatura.extract(html, output_format="markdown", include_tables=True, include_links=False,
-                             include_formatting=True, favor_recall=True)
-    if not md or len(md.strip()) < 80:
-        raise ParseError("Not enough readable text was found on this page. It may need JavaScript to load, or may be blocked. Paste the text instead.")
-    return Parsed(markdown=_restore_headings(md, html))
-
-
-def _restore_headings(md: str, html: str) -> str:
-    """trafilatura often flattens headings to plain lines. Chunking relies on headings for section names,
-    so mark any line that matches an <h1>-<h3> from the original page."""
-    import lxml.html
-
-    try:
-        tree = lxml.html.fromstring(html)
-    except Exception:
-        return md
-    norm = lambda t: re.sub(r"\s+", " ", t).strip().lower()  # noqa: E731
-    heads = {}
-    for level, tag in enumerate(("h1", "h2", "h3"), start=1):
-        for el in tree.iter(tag):
-            for br in el.iter("br"):          # "Line one<br>line two" is one heading: join with a space
-                br.tail = " " + (br.tail or "")
-            text = norm(el.text_content())
-            if 3 <= len(text) <= 120:
-                heads.setdefault(text, level)
-    out = []
-    for line in md.split("\n"):
-        plain = norm(re.sub(r"^#+\s*|[*_]", "", line))
-        level = heads.get(plain)
-        if level and line.strip() and not line.startswith("#"):
-            text = re.sub(r"[*_]", "", line).strip()
-            line = "#" * level + " " + text
-        out.append(line)
-    return "\n".join(out)
+    """One page, read the same way as a whole website (site.extract_site, D-110)."""
+    from .site import extract_site   # imported here: site imports netsafe, which imports this module
+    return extract_site([(None, html)])
 
 
 def parse_file(kind: str, data: bytes, name: str) -> Parsed:

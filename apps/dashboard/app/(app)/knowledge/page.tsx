@@ -14,7 +14,7 @@ const STATUS = {
   failed: { tone: "danger", label: "Failed" },
 } as const;
 
-type Stats = { checked_at?: string; refreshed_at?: string; check_error?: string | null; chunks?: number; tokens?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
+type Stats = { pages?: number; checked_at?: string; refreshed_at?: string; check_error?: string | null; chunks?: number; tokens?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
 
 export default async function KnowledgePage() {
   const supabase = await supabaseServer();
@@ -51,6 +51,7 @@ export default async function KnowledgePage() {
                           </span>
                           <span className="font-mono text-xs text-ink-muted">
                             {s.source_type === "file" ? s.file_kind?.toUpperCase() : s.source_type === "url" ? s.url : s.source_type === "faq" ? "Q&A" : "Text"} · {time(s.created_at)}
+                            {stats.pages ? ` · ${stats.pages} pages` : ""}
                             {stats.chunks ? ` · ${stats.chunks} sections` : ""}
                             {stats.tables?.length ? ` · ${stats.tables.map((t) => `${t.name}: ${t.rows} rows`).join(", ")}` : ""}
                           </span>

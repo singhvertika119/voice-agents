@@ -109,6 +109,13 @@ def keyword_terms(query: str) -> list[str]:
     return list(dict.fromkeys(words))[:12]
 
 
+async def _warm() -> None:
+    try:
+        await embeddings.embed_query("namaste")
+    except Exception:
+        pass
+
+
 async def load_knowledge(source_ids: list[str], tenant_id: str, mode: str = "auto") -> KnowledgeBase:
     """Only sources that belong to the agent's own workspace and are 'ready' are ever used.
     mode: "auto" (in the prompt if small, searched if large), or "prompt" / "search" to force one for an agent."""
@@ -133,6 +140,9 @@ async def load_knowledge(source_ids: list[str], tenant_id: str, mode: str = "aut
             kb.mode, kb.prompt_text = "prompt", "\n\n".join(c["content"] for c in chunks)
         else:
             kb.mode = "search"
+            # Open the connection to the embedding service while the greeting plays, so the caller's first question
+            # does not pay for it (about 1 s, D-110). The connection is then reused for the rest of the call.
+            asyncio.ensure_future(_warm())
         log.info("knowledge: %s mode, %d tokens, %d sources, %d tables", kb.mode, total, len(ok_ids), len(tables))
         return kb
     except Exception as e:

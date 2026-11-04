@@ -11,25 +11,36 @@ import httpx
 MODEL = "text-embedding-3-small"
 DIMS = 1536
 _cache: OrderedDict[str, list[float]] = OrderedDict()  # query embeddings repeat within a call; keep the last 256
+_pool: dict = {}
+
+
+def _client() -> httpx.AsyncClient:
+    """One open connection to OpenAI per event loop, reused: a new one cost about 1 s on the first search of a call
+    (D-110). A client cannot move between loops, so a new loop gets a new client."""
+    loop = asyncio.get_running_loop()
+    entry = _pool.get("c")
+    if entry is None or entry[0] is not loop or entry[1].is_closed:
+        _pool["c"] = (loop, httpx.AsyncClient(timeout=30, limits=httpx.Limits(keepalive_expiry=60)))
+    return _pool["c"][1]
 
 
 async def embed(texts: list[str], timeout: float = 30, retries: int = 3) -> list[list[float]]:
     key = os.environ["OPENAI_API_KEY"]
     out: list[list[float]] = []
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        for i in range(0, len(texts), 64):
-            batch = [t[:8000] for t in texts[i : i + 64]]
-            for attempt in range(retries + 1):
-                r = await c.post("https://api.openai.com/v1/embeddings",
-                                 headers={"Authorization": f"Bearer {key}"}, json={"model": MODEL, "input": batch})
-                if r.status_code == 429 and "insufficient_quota" in r.text:
-                    break   # out of credit: waiting will not help, fail at once so callers can fall back
-                if r.status_code in (429, 500, 502, 503) and attempt < retries:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                r.raise_for_status()
-                break
-            out += [d["embedding"] for d in sorted(r.json()["data"], key=lambda d: d["index"])]
+    c = _client()
+    for i in range(0, len(texts), 64):
+        batch = [t[:8000] for t in texts[i : i + 64]]
+        for attempt in range(retries + 1):
+            r = await c.post("https://api.openai.com/v1/embeddings", timeout=timeout,
+                             headers={"Authorization": f"Bearer {key}"}, json={"model": MODEL, "input": batch})
+            if r.status_code == 429 and "insufficient_quota" in r.text:
+                break   # out of credit: waiting will not help, fail at once so callers can fall back
+            if r.status_code in (429, 500, 502, 503) and attempt < retries:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            r.raise_for_status()
+            break
+        out += [d["embedding"] for d in sorted(r.json()["data"], key=lambda d: d["index"])]
     return out
 
 

@@ -57,8 +57,8 @@ export function AddKnowledge() {
           </label>
         )}
         {mode === "url" && (
-          <Field label="Web page address" helper="One page at a time. Pages that need a login or JavaScript may not be readable.">
-            <input name="url" type="url" placeholder="https://yourbusiness.in/fees" className={inputCls} />
+          <Field label="Website address" helper="Enter your home page to read the whole website (up to 40 pages, contact and FAQ pages first), or a deeper page to read just that part. Pages that need a login or JavaScript may not be readable.">
+            <input name="url" type="url" placeholder="https://yourbusiness.in" className={inputCls} />
           </Field>
         )}
         {mode === "text" && (

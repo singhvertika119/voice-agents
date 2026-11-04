@@ -27,8 +27,11 @@ def assert_public(url: str) -> None:
             raise ParseError("That address is not a public website, so it cannot be read.")
 
 
-async def fetch_public_html(url: str, max_redirects: int = 3) -> str:
-    headers = {"User-Agent": "VoiceAgentsBot/0.1 (+knowledge import)", "Accept": "text/html,application/xhtml+xml"}
+async def fetch_public_page(url: str, max_redirects: int = 3, html_only: bool = True) -> tuple[str, str]:
+    """(final address after redirects, body). Every hop is checked to be a public address. html_only=False also
+    accepts plain text and XML (robots.txt and sitemaps, D-110)."""
+    headers = {"User-Agent": "VoiceAgentsBot/0.1 (+knowledge import)",
+               "Accept": "text/html,application/xhtml+xml" if html_only else "text/html,text/plain,application/xml,text/xml,*/*"}
     async with httpx.AsyncClient(timeout=15, follow_redirects=False, headers=headers) as c:
         for _ in range(max_redirects + 1):
             await asyncio.to_thread(assert_public, url)  # re-check every hop; the DNS lookup blocks, so it runs in a thread
@@ -38,12 +41,16 @@ async def fetch_public_html(url: str, max_redirects: int = 3) -> str:
                     continue
                 if r.status_code >= 400:
                     raise ParseError(f"The website answered with an error ({r.status_code}). Check the address or paste the text instead.")
-                if "html" not in r.headers.get("content-type", "html"):
+                if html_only and "html" not in r.headers.get("content-type", "html"):
                     raise ParseError("That address is not a web page. For files, use Upload.")
                 body = b""
                 async for part in r.aiter_bytes():
                     body += part
                     if len(body) > MAX_BYTES:
                         raise ParseError("That page is too large to import.")
-                return body.decode(r.encoding or "utf-8", errors="replace")
+                return url, body.decode(r.encoding or "utf-8", errors="replace")
     raise ParseError("That address redirects too many times.")
+
+
+async def fetch_public_html(url: str, max_redirects: int = 3) -> str:
+    return (await fetch_public_page(url, max_redirects))[1]
