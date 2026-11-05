@@ -59,6 +59,8 @@ class KnowledgeBase:
     core_text: str = ""                    # key facts, always in the prompt in "search" mode (D-111)
     tables: list[dict] = field(default_factory=list)
     retrieval_ms: list[int] = field(default_factory=list)
+    search_parts: list[dict] = field(default_factory=list)   # per search: embed_ms, db_ms (D-118)
+    retrieve_log: list[dict] = field(default_factory=list)   # per answered question: early_search_used, waited_ms
     _pending: dict = field(default_factory=dict)   # query text -> in-flight/finished search task
     _last_prefetch: float = 0.0
 
@@ -96,14 +98,19 @@ class KnowledgeBase:
             # Embeddings come from OpenAI; when that account is out of credit, keyword search still finds passages.
             log.warning("embedding failed (%s); using keyword search only", str(e)[:120])
             return await self._keyword_search(query, t0)
+        t1 = time.perf_counter()
+        trace: dict = {}
         try:
             rows = await supa.rpc("match_chunks", {"p_sources": self.source_ids, "p_embedding": embeddings.to_pg(vec),
                                                    "p_query": query, "p_k": TOP_K, "p_tenant": self.tenant_id},
-                                  timeout=RETRIEVE_TIMEOUT_S * 3)
+                                  timeout=RETRIEVE_TIMEOUT_S * 3, trace=trace)
         except Exception as e:
             log.warning("retrieval failed (%s); answering without documents", e)
             return None
-        self.retrieval_ms.append(int((time.perf_counter() - t0) * 1000))
+        t2 = time.perf_counter()
+        self.retrieval_ms.append(int((t2 - t0) * 1000))
+        # Split for D-118: the OpenAI embedding vs the database lookup (Supabase, Seoul).
+        self.search_parts.append({"embed_ms": int((t1 - t0) * 1000), "db_ms": int((t2 - t1) * 1000), **trace})
         return "\n\n".join(r["content"] for r in rows) if rows else ""
 
     async def _keyword_search(self, query: str, t0: float) -> str | None:
@@ -128,10 +135,16 @@ class KnowledgeBase:
         # Reuse a speculative search whose words are (nearly) the final words.
         task = self._pending.get(text) or next(
             (t for q, t in self._pending.items() if difflib.SequenceMatcher(None, q, text).ratio() > 0.85), None)
+        reused = task is not None
         if task is None:
             task = asyncio.ensure_future(self._search(text))
+        t0 = time.perf_counter()
         try:
-            return await asyncio.wait_for(asyncio.shield(task), RETRIEVE_TIMEOUT_S)
+            out = await asyncio.wait_for(asyncio.shield(task), RETRIEVE_TIMEOUT_S)
+            # Whether the search started on the caller's partial words could be used, and how long the reply still
+            # waited for it (D-118).
+            self.retrieve_log.append({"early_search_used": reused, "waited_ms": int((time.perf_counter() - t0) * 1000)})
+            return out
         except asyncio.TimeoutError:
             log.warning("retrieval too slow; answering without documents")
             return None
@@ -173,11 +186,16 @@ async def _core_facts(source_ids: list[str], tenant_id: str) -> str:
     return "\n".join(out)
 
 
-async def _warm() -> None:
+async def _warm(kb: KnowledgeBase) -> None:
+    """One real search while the greeting plays. Opening the embedding connection alone was not enough: every call's
+    first database search still took 0.68-0.96 s and later ones about 0.26 s (D-118), even with the database connection
+    already open, so the search itself is run once here. Its timing is not counted in the call's search figures."""
     try:
-        await embeddings.embed_query("namaste")
-    except Exception:
-        pass
+        vec = await embeddings.embed_query("namaste, office kahan hai")
+        await supa.rpc("match_chunks", {"p_sources": kb.source_ids, "p_embedding": embeddings.to_pg(vec),
+                                        "p_query": "office", "p_k": TOP_K, "p_tenant": kb.tenant_id}, timeout=10)
+    except Exception as e:
+        log.info("search warm-up skipped: %s", str(e)[:100])
 
 
 async def load_knowledge(source_ids: list[str], tenant_id: str, mode: str = "auto") -> KnowledgeBase:
@@ -205,9 +223,9 @@ async def load_knowledge(source_ids: list[str], tenant_id: str, mode: str = "aut
         else:
             kb.mode = "search"
             kb.core_text = await _core_facts(ok_ids, tenant_id)
-            # Open the connection to the embedding service while the greeting plays, so the caller's first question
-            # does not pay for it (about 1 s, D-110). The connection is then reused for the rest of the call.
-            asyncio.ensure_future(_warm())
+            # Warm the embedding connection and the database search while the greeting plays, so the caller's first
+            # question does not pay for them (D-110, D-118). Both connections are then reused for the rest of the call.
+            asyncio.ensure_future(_warm(kb))
         log.info("knowledge: %s mode, %d tokens, %d sources, %d tables", kb.mode, total, len(ok_ids), len(tables))
         return kb
     except Exception as e:

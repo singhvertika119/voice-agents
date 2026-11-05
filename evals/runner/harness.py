@@ -47,12 +47,8 @@ async def run_conversation(cfg: AgentConfig, kb: KnowledgeBase, scenario: dict, 
                 break
             transcript.append({"speaker": "caller", "text": line})
             n_ttft, n_ret = len(ttft), len(kb.retrieval_ms)
-            extra = await agent.turn_context_additions(line)  # what a live call does in on_user_turn_completed
-            if extra:
-                c2 = agent.chat_ctx.copy()
-                for role, text in extra:
-                    c2.add_message(role=role, content=text)
-                await agent.update_chat_ctx(c2)
+            # The language hint and passages are added by the agent's llm_node, for that model request only, exactly as
+            # in a live call (D-116). Before, they were added here and stayed in the history for later turns.
             t0 = time.perf_counter()
             result = await session.run(user_input=line)
             wall = time.perf_counter() - t0

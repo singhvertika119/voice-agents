@@ -154,6 +154,7 @@ async def entrypoint(ctx: JobContext):
 
     call_id = f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}"
     mlog = CallMetricsLog(REPO_ROOT / "logs", call_id, cfg.id)
+    agent.on_prepared = mlog.on_prepared
     mlog._write({"event": "mode", "mode": mode, "knowledge_mode": kb.mode, "memory": bool(memory_block), "caller": bool(caller_number)})
     t_start, turns, tasks = time.time(), [], set()
 
@@ -183,6 +184,8 @@ async def entrypoint(ctx: JobContext):
     @session.on("conversation_item_added")
     def _on_item(ev):
         item = ev.item
+        if getattr(item, "role", None) in ("user", "assistant"):
+            mlog.on_message(item.role, dict(getattr(item, "metrics", None) or {}))   # per-reply timings (D-116)
         text = getattr(item, "text_content", None)
         if getattr(item, "role", None) in ("user", "assistant") and text:
             # Identity numbers are removed before anything is stored (D-052).
@@ -205,7 +208,9 @@ async def entrypoint(ctx: JobContext):
         outcome = "dropped" if mode in ("full", "disabled") else state.outcome(spoke)
         essentials = {"ended_at": datetime.now(timezone.utc).isoformat(), "duration_s": round(time.time() - t_start, 1),
                       "avg_reply_ms": mlog.avg_reply_ms(), "cost_usd": round(mlog.cost_usd(), 6),
-                      "cost_breakdown": {**mlog.totals, "retrieval_ms": kb.retrieval_ms, "knowledge_mode": kb.mode, "mode": mode},
+                      "cost_breakdown": {**mlog.totals, "retrieval_ms": kb.retrieval_ms, "knowledge_mode": kb.mode, "mode": mode,
+                                         "replies": mlog.turn_timings(),   # shown on the call page (D-115)
+                                         "search_parts": kb.search_parts, "retrieve_log": kb.retrieve_log},   # D-118
                       "language": cfg.language, "outcome": outcome, "tool_calls": state.tool_log, "contact_id": contact_id}
         await db.finish_call(call_row, tenant_id, essentials, [])
 

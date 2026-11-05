@@ -1,18 +1,17 @@
 """The agent itself, shared by live calls and test conversations so a test exercises exactly what a caller meets."""
 from __future__ import annotations
 
-import re
+import time
 from collections.abc import AsyncIterable
 
-from livekit.agents import Agent
+from livekit.agents import Agent, llm
 
 from .config import AgentConfig
 from .language import language_hint, set_tts_language, tts_language
 from .knowledge import KnowledgeBase, is_acknowledgement, make_lookup_tool
 from .normalize import normalize_for_speech
+from .speech_chunks import ClauseSplitter
 from .tools import CONVERSATION_RULES, TOOL_RULES
-
-_SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
 
 
 def build_instructions(cfg: AgentConfig, kb: KnowledgeBase, memory_block: str = "", extra_rules: str = "") -> str:
@@ -28,6 +27,8 @@ class VoiceAgent(Agent):
         super().__init__(instructions=build_instructions(cfg, kb, memory_block, extra_rules), tools=all_tools)
         self.kb = kb
         self.voice_language = cfg.language   # what the speech providers were built with; changes with the caller's language
+        self._extra: tuple[tuple[str, str], list[tuple[str, str]]] | None = None   # ((message id, text), additions)
+        self.on_prepared = None   # set by the call: receives the ms the model waited for hints and search
 
     async def turn_context_additions(self, caller_text: str) -> list[tuple[str, str]]:
         """Extra (role, text) messages for this turn: a language reminder and, for large knowledge, passages.
@@ -65,19 +66,46 @@ class VoiceAgent(Agent):
             pass
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        # Only the voice language here. The hint and passages are added in llm_node: anything added to turn_ctx here
+        # made LiveKit throw away the reply it had started early, so the search and the model ran one after the other
+        # after the end-of-turn wait (logs: "preemptive generation invalidated", D-116).
         self.speak_in(tts_language(new_message.text_content or "", self.voice_language))
-        for role, text in await self.turn_context_additions(new_message.text_content or ""):
-            turn_ctx.add_message(role=role, content=text)
+
+    async def llm_node(self, chat_ctx, tools, model_settings):
+        """Adds this turn's language hint and passages right after the caller's last message, for this model request
+        only, as on_user_turn_completed did before. LiveKit runs this early, while it is still deciding whether the
+        caller has finished, so the search now overlaps that wait. Kept per caller message: the model is asked again
+        after a tool call and must see the same passages."""
+        items = chat_ctx.items
+        at = next((i for i in range(len(items) - 1, -1, -1)
+                   if getattr(items[i], "type", None) == "message" and items[i].role == "user"), None)
+        if at is not None:
+            msg = items[at]
+            key = (msg.id, msg.text_content or "")
+            if self._extra is None or self._extra[0] != key:
+                t0 = time.perf_counter()
+                self._extra = (key, await self.turn_context_additions(key[1]))
+                if self.on_prepared:
+                    self.on_prepared(round((time.perf_counter() - t0) * 1000))
+            if self._extra[1]:
+                chat_ctx = chat_ctx.copy()
+                for j, (role, text) in enumerate(self._extra[1]):
+                    chat_ctx.items.insert(at + 1 + j, llm.ChatMessage(role=role, content=[text], created_at=msg.created_at))
+        return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
 
     async def tts_node(self, text: AsyncIterable[str], model_settings) -> AsyncIterable:
         async def spoken() -> AsyncIterable[str]:
+            # Normalized a piece at a time so digit strings are never split mid-number. The first piece may end at a
+            # comma, so the voice starts before the first sentence is finished (D-115); later pieces are sentences.
+            split = ClauseSplitter()
             buf = ""
-            async for chunk in text:  # normalize per sentence so digit strings are never split mid-number
+            async for chunk in text:
                 buf += chunk
-                parts = _SENTENCE_END.split(buf)
-                for s in parts[:-1]:
-                    yield normalize_for_speech(s) + " "
-                buf = parts[-1]
+                pieces = split(buf)
+                if len(pieces) > 1:
+                    for p, _, _ in pieces[:-1]:
+                        yield normalize_for_speech(p) + " "
+                    buf = buf[pieces[-1][1]:]
             if buf.strip():
                 yield normalize_for_speech(buf)
 

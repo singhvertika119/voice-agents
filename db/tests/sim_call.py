@@ -31,7 +31,10 @@ async def main():
     async def silence(sec):
         z=np.zeros(1600,np.int16)
         for _ in range(int(sec*10)): await src.capture_frame(rtc.AudioFrame(z.tobytes(),SR,1,1600)); await asyncio.sleep(0.1)
-    clips=sorted(glob.glob("benchmark/data/audio/*.wav"))[:2]
+    clips=sorted(glob.glob("benchmark/data/audio/*.wav"))
+    # SIM_CLIPS=short: the two shortest clips. LiveKit only starts a reply early for speech under 10 s, and the
+    # default clips are 9.1 s and 13.8 s, so they hide that (D-116); real callers usually ask in a few seconds.
+    clips=sorted(clips,key=lambda p:sf.info(p).duration)[:2] if os.getenv("SIM_CLIPS")=="short" else clips[:2]
     await silence(12)                       # let the greeting play
     for c in clips:
         print("speaking",os.path.basename(c)); await say(clip(c)); await silence(14)   # wait for the answer

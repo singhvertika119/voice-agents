@@ -27,6 +27,9 @@ class CallMetricsLog:
         self.agent_id = agent_id
         self.totals = {"stt_sec": 0.0, "tts_chars": 0, "llm_in": 0, "llm_cached": 0, "llm_out": 0}
         self._turns: list[dict] = []   # one entry per caller turn: eou, ttft, ttfb
+        self._replies: list[dict] = []  # per reply, from the messages' own timings (on_message)
+        self._caller: dict | None = None
+        self._search_ms = 0
         self._write({"event": "call_started", "agent_id": agent_id})
 
     def _write(self, rec: dict):
@@ -60,9 +63,34 @@ class CallMetricsLog:
             self.totals["stt_sec"] += m.audio_duration
             self._write({"event": "stt", "provider": getattr(m, "label", ""), "audio_s": round(m.audio_duration, 2)})
 
+    def on_prepared(self, ms: int) -> None:
+        """Time the model waited for the language hint and knowledge search (from VoiceAgent.llm_node)."""
+        self._search_ms = ms
+
+    def on_message(self, role: str, m: dict) -> None:
+        """Timings LiveKit attaches to each message: the caller's has the end-of-turn wait, the agent's has the model's
+        first word, the voice's first audio and e2e_latency (caller stopped speaking -> agent started speaking)."""
+        ms = lambda s: round((s or 0) * 1000)  # noqa: E731
+        if role == "user":
+            self._caller = {"wait": ms(m.get("end_of_turn_delay")), "transcript": ms(m.get("transcription_delay"))}
+        elif role == "assistant" and m.get("e2e_latency") is not None and self._caller:
+            self._replies.append({**self._caller, "search": self._search_ms,
+                                  "first_word": ms(m.get("llm_node_ttft")), "voice": ms(m.get("tts_node_ttfb")),
+                                  "total": ms(m["e2e_latency"])})
+            self._write({"event": "reply_timing", **self._replies[-1]})
+            self._caller, self._search_ms = None, 0
+
     def reply_times(self) -> list[float]:
-        """Per caller turn: end-of-utterance delay + LLM first token + voice first byte, in seconds."""
+        """Per reply, seconds from the caller going quiet to the agent's voice starting. LiveKit's own measure since
+        D-116; the parts (wait, search, model, voice) can overlap, so they are no longer added up. Older formula
+        (end-of-utterance + first token + first audio, which left out the search) only if that is missing."""
+        if self._replies:
+            return [r["total"] / 1000 for r in self._replies]
         return [t["eou"] + t["ttft"] + t["ttfb"] for t in self._turns if "ttft" in t and "ttfb" in t]
+
+    def turn_timings(self) -> list[dict]:
+        """Per reply, in ms, saved with the call for the dashboard's "Reply times" card (D-115, D-116)."""
+        return self._replies
 
     def avg_reply_ms(self) -> int | None:
         r = self.reply_times()

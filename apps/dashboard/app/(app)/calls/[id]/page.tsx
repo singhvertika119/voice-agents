@@ -25,6 +25,15 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
   }
   const st = call.structured as { intent?: string; commitments?: string[]; open_items?: string[] } | null;
   const tools = (call.tool_calls ?? []) as { tool: string; ok: boolean; ms: number }[];
+  // Saved by the voice agent per caller turn (D-115). Calls from before then have none.
+  type Timing = { wait: number; transcript: number; search: number; first_word: number; voice: number; total: number };
+  // first_word is timed from the start of the model step, which begins with the search (D-116), so the model's own
+  // part is first_word minus search.
+  const replies = ((call.cost_breakdown as { replies?: Timing[] } | null)?.replies ?? [])
+    .filter((r) => r && r.total != null)
+    .map((r) => ({ ...r, first_word: Math.max(r.first_word - r.search, 0) }));
+  const sec = (ms: number) => `${(ms / 1000).toFixed(2)}`;
+  const slowest = (r: Timing) => (["wait", "search", "first_word", "voice"] as const).reduce((a, b) => (r[b] > r[a] ? b : a));
   const facts: [string, string][] = [
     ["Agent version", `v${call.agent_version}`],
     ["Language", call.language ?? "-"],
@@ -70,6 +79,44 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
                   </li>
                 ))}
               </ul>
+            </Card>
+          )}
+          {replies.length > 0 && (
+            <Card className="p-5">
+              <h2 className="text-base font-semibold">Reply times</h2>
+              <p className="text-[13px] text-ink-muted mt-1 mb-3">
+                Seconds per reply, from the caller going quiet to the agent&rsquo;s voice starting: waiting to be sure the caller has finished, the knowledge search, the model&rsquo;s first word, then the voice. The slowest part is in bold.
+              </p>
+              <div className="overflow-x-auto -mx-1">
+                <table className="w-full text-[13px] font-mono">
+                  <thead>
+                    <tr className="text-left text-ink-muted font-sans text-xs">
+                      <th className="font-medium px-1 py-1.5">#</th>
+                      <th className="font-medium px-1 py-1.5" title="End of speech until the turn was taken as finished">Wait</th>
+                      <th className="font-medium px-1 py-1.5" title="Time the model waited for the knowledge search">Search</th>
+                      <th className="font-medium px-1 py-1.5" title="Model's first word">Model</th>
+                      <th className="font-medium px-1 py-1.5" title="First audio from the voice">Voice</th>
+                      <th className="font-medium px-1 py-1.5 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {replies.map((r, i) => {
+                      const top = slowest(r);
+                      const cell = (k: "wait" | "search" | "first_word" | "voice") => <td className={`px-1 py-1.5 ${k === top ? "font-semibold text-ink" : "text-ink-secondary"}`}>{sec(r[k])}</td>;
+                      return (
+                        <tr key={i} className="border-t border-line-subtle">
+                          <td className="px-1 py-1.5 text-ink-muted">{i + 1}</td>
+                          {cell("wait")}
+                          {cell("search")}
+                          {cell("first_word")}
+                          {cell("voice")}
+                          <td className="px-1 py-1.5 text-right">{sec(r.total)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           )}
           <Card className="p-5">

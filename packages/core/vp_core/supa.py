@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 import httpx
 
@@ -65,8 +66,33 @@ async def delete(table: str, match: dict) -> None:
         r.raise_for_status()
 
 
-async def rpc(fn: str, args: dict, timeout: float = 20) -> list[dict]:
-    r = await pooled().post(f"/rest/v1/rpc/{fn}", json=args, timeout=timeout)
+async def rpc(fn: str, args: dict, timeout: float = 20, trace: dict | None = None) -> list[dict]:
+    """trace: if given, filled with how the request went (D-120): new_connection, and ms for connecting, the secure
+    handshake, and waiting for the answer, plus which pooled client was used."""
+    ext = {}
+    if trace is not None:
+        t0 = time.perf_counter()
+        marks: dict[str, float] = {}
+
+        async def on(name: str, info: dict) -> None:
+            marks[name] = time.perf_counter()
+
+        ext = {"trace": on}
+    c = pooled()
+    r = await c.post(f"/rest/v1/rpc/{fn}", json=args, timeout=timeout, extensions=ext)
+    if trace is not None:
+        ms = lambda a, b: round((marks[b] - marks[a]) * 1000) if a in marks and b in marks else None  # noqa: E731
+        trace.update({
+            "new_connection": "connection.connect_tcp.started" in marks,
+            "connect_ms": ms("connection.connect_tcp.started", "connection.connect_tcp.complete"),
+            "tls_ms": ms("connection.start_tls.started", "connection.start_tls.complete"),
+            "answer_ms": next((v for v in (ms("http11.send_request_headers.started", "http11.receive_response_headers.complete"),
+                                           ms("http2.send_request_headers.started", "http2.receive_response_headers.complete"))
+                               if v is not None), None),
+            "total_ms": round((time.perf_counter() - t0) * 1000),
+            "client": id(c) % 10000,
+            "http": r.http_version,
+        })
     r.raise_for_status()
     return r.json()
 

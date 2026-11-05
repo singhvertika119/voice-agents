@@ -13,6 +13,7 @@ from google.genai import types as genai_types
 from livekit.plugins import cartesia, deepgram, google, openai, sarvam
 
 from .config import AgentConfig
+from .speech_chunks import ClauseTokenizer
 
 log = logging.getLogger("providers")
 
@@ -57,8 +58,11 @@ def _stt(spec: dict, lang: str):
         # high_vad_sensitivity makes Sarvam declare the end of an utterance sooner. Off (D-097) the live text was
         # cleaner but replies were about 0.5 s slower, because the reply waits for Sarvam's final transcript; on again
         # for speed (D-099). An agent can still turn it off in its STT config.
+        # flush_signal: when Sarvam's end-of-speech check fires, the plugin asks for the final transcript at once
+        # instead of Sarvam's usual wait; the reply cannot start before that final text (D-115).
         return sarvam.STT(language=lang, model=spec["model"], mode=spec.get("mode", "transcribe"),
-                          high_vad_sensitivity=spec.get("high_vad_sensitivity", True))
+                          high_vad_sensitivity=spec.get("high_vad_sensitivity", True),
+                          flush_signal=spec.get("flush_signal", True))
     if p == "deepgram" and _has("DEEPGRAM_API_KEY"):
         return deepgram.STT(model=spec["model"], language=lang.split("-")[0], sample_rate=16000)
     return None
@@ -67,7 +71,13 @@ def _stt(spec: dict, lang: str):
 def _tts(spec: dict, lang: str):
     p = spec["provider"]
     if p == "sarvam" and _has("SARVAM_API_KEY") and not is_down("sarvam"):
-        return sarvam.TTS(target_language_code=lang, model=spec["model"], speaker=spec.get("speaker"))
+        # Start speaking sooner (D-115): Sarvam begins once it has 30 characters (its minimum; default 50), and the
+        # plugin's sentence splitter is swapped for one that lets the first piece end at a comma. The plugin takes no
+        # splitter argument, so it is set on its options; tests/test_speech_chunks.py checks this still works.
+        voice = sarvam.TTS(target_language_code=lang, model=spec["model"], speaker=spec.get("speaker"),
+                           min_buffer_size=spec.get("min_buffer_size", 30))
+        voice._opts.word_tokenizer = ClauseTokenizer()
+        return voice
     if p == "cartesia" and _has("CARTESIA_API_KEY"):
         return cartesia.TTS(model=spec["model"], language=lang.split("-")[0], word_timestamps=False)
     return None
