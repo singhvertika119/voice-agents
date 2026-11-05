@@ -105,7 +105,7 @@ async def main():
 
         async def ask(q, sources):
             vec = await embeddings.embed_query(q)
-            r = rest("POST", "rpc/match_chunks", A, json={"p_sources": sources, "p_embedding": embeddings.to_pg(vec), "p_query": q, "p_k": 3})
+            r = rest("POST", "rpc/match_chunks_local", A, json={"p_sources": sources, "p_embedding": embeddings.to_pg(vec), "p_query": q, "p_k": 3})
             return r.json()
 
         cases = [
@@ -145,7 +145,7 @@ async def main():
 
 async def ask_as(h, q, sources):
     vec = await embeddings.embed_query(q)
-    return httpx.post(f"{URL}/rest/v1/rpc/match_chunks", headers=h, timeout=T,
+    return httpx.post(f"{URL}/rest/v1/rpc/match_chunks_local", headers=h, timeout=T,
                       json={"p_sources": sources, "p_embedding": embeddings.to_pg(vec), "p_query": q, "p_k": 3}).json()
 
 

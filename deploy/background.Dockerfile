@@ -29,5 +29,8 @@ COPY --chown=worker evals evals
 COPY --chown=worker agents agents
 COPY --chown=worker deploy/run_background.py deploy/run_background.py
 
+# The embedding model (multilingual-e5-base, int8, ~0.3 GB), so documents and chat questions do not wait for a download (D-122).
+RUN uv run --no-sync python -c "from vp_core.embeddings import download; download()"
+
 # Render sets PORT. The health page answers there; the workers run alongside it.
 CMD ["uv", "run", "--no-sync", "python", "deploy/run_background.py"]

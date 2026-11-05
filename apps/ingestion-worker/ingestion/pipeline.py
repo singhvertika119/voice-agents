@@ -108,7 +108,7 @@ async def index(src: dict, parsed: Parsed, live: bool = False) -> None:
     await supa.delete("kb_tables", {"source_id": sid})
     if chunks:
         rows = [{"tenant_id": tenant, "source_id": sid, "idx": c.idx, "section": c.section, "content": c.content,
-                 "tokens": c.tokens, "embedding": embeddings.to_pg(v)} for c, v in zip(chunks, vecs)]
+                 "tokens": c.tokens, "embedding_local": embeddings.to_pg(v)} for c, v in zip(chunks, vecs)]
         for i in range(0, len(rows), 100):
             await supa.insert("kb_chunks", rows[i : i + 100])
     if parsed.tables:
@@ -213,10 +213,10 @@ async def quality_gate(tenant: str, source_id: str, chunks: list[Chunk], faq: bo
             log.exception("question generation failed; skipping quality gate for %s", source_id)
             return {"tested": 0, "hit_rate": 1.0, "failed": [], "note": "Quality check was skipped."}
     pairs = [(c, q) for c, q in zip(sample, qs) if q.strip()]
-    vecs = await embeddings.embed([q for _, q in pairs])
+    vecs = await embeddings.embed_queries([q for _, q in pairs])
     hits, failed = 0, []
     for (chunk, q), vec in zip(pairs, vecs):
-        found = await supa.rpc("match_chunks", {"p_sources": [source_id], "p_embedding": embeddings.to_pg(vec),
+        found = await supa.rpc("match_chunks_local", {"p_sources": [source_id], "p_embedding": embeddings.to_pg(vec),
                                                 "p_query": q, "p_k": 3, "p_tenant": tenant})
         if any(f["content"] == chunk.content or (website and _page_of(f["content"]) == _page_of(chunk.content)) for f in found):
             hits += 1

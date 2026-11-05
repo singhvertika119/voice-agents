@@ -21,7 +21,7 @@ async def main():
     room_name=f"live-{AG}-{PHONE}_{uuid.uuid4().hex[:6]}" if PHONE else f"live-{AG}-sim{uuid.uuid4().hex[:4]}"
     tok=(api.AccessToken(os.environ["LIVEKIT_API_KEY"],os.environ["LIVEKIT_API_SECRET"]).with_identity("sim-caller")
          .with_grants(api.VideoGrants(room_join=True,room=room_name)).with_attributes({"caller_number":PHONE or "+919999900001"})
-         .with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name="voice-platform")])).to_jwt())
+         .with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name=os.getenv("AGENT_NAME","voice-platform"))])).to_jwt())
     room=rtc.Room(); await room.connect(os.environ["LIVEKIT_URL"],tok)
     src=rtc.AudioSource(SR,1); track=rtc.LocalAudioTrack.create_audio_track("mic",src)
     await room.local_participant.publish_track(track,rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))

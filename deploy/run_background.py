@@ -6,6 +6,9 @@ an uptime monitor calling it every few minutes also keeps a free host from putti
     python deploy/run_background.py
 """
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 import os
 import sys
@@ -16,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "apps/agent-worker"), str(ROOT / "apps/ingestion-worker"), str(ROOT / "packages/core"), str(ROOT)]
 
 from aiohttp import web  # noqa: E402  (installed with the LiveKit packages)
-from vp_core import heartbeat  # noqa: E402
+from vp_core import embeddings, heartbeat  # noqa: E402
 
 log = logging.getLogger("background")
 STARTED = time.time()
@@ -49,6 +52,26 @@ async def health(_request: web.Request) -> web.Response:
                               "last_poll_s": heartbeat.ages(), "memory_mb": _memory_mb()})
 
 
+async def embed(request: web.Request) -> web.Response:
+    """Question vectors for the dashboard's knowledge chat (D-122): the embedding model runs here, not on Vercel.
+    The dashboard signs each request with the service-role key both servers already hold (HMAC of time + body), so
+    the key itself is never sent and an old request cannot be replayed after a minute."""
+    body = await request.read()
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    ts = request.headers.get("x-vp-time", "")
+    sig = request.headers.get("x-vp-signature", "")
+    want = hmac.new(key.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    if not key or not ts.isdigit() or abs(time.time() - int(ts)) > 60 or not hmac.compare_digest(sig, want):
+        return web.json_response({"error": "not allowed"}, status=401)
+    try:
+        texts = json.loads(body)["texts"]
+        assert isinstance(texts, list) and 0 < len(texts) <= 8 and all(isinstance(t, str) for t in texts)
+    except Exception:
+        return web.json_response({"error": "send {\"texts\": [up to 8 strings]}"}, status=400)
+    vecs = await embeddings.embed_queries([t[:2000] for t in texts])
+    return web.json_response({"model": embeddings.MODEL, "vectors": [[round(x, 6) for x in v] for v in vecs]})
+
+
 def _memory_mb() -> int | None:
     try:
         with open("/proc/self/status") as f:   # Linux (Render); absent on Windows, where it is simply left out
@@ -65,12 +88,14 @@ async def main() -> None:
     from ingestion.main import main as ingestion_main
 
     app = web.Application()
-    app.add_routes([web.get("/", health), web.get("/healthz", health)])
+    app.add_routes([web.get("/", health), web.get("/healthz", health), web.post("/embed", embed)])
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", "10000"))
     await web.TCPSite(runner, "0.0.0.0", port).start()
     log.info("health page on port %s", port)
+    # Load the embedding model now (about 0.3 GB, a second or two), not on the first chat question or document.
+    asyncio.get_running_loop().run_in_executor(None, embeddings.encoder)
     workers = [supervise("ingestion", ingestion_main)]
     if RUN_TESTS:
         from evals.worker import main as tests_main   # imported only when used: the import alone is about 140 MB

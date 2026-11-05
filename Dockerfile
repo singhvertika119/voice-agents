@@ -30,7 +30,7 @@ COPY --chown=agent apps/agent-worker apps/agent-worker
 COPY --chown=agent packages/core packages/core
 COPY --chown=agent agents agents
 
-# Download the turn-detection and voice-activity models now, so the first call does not wait for them.
+# Download the turn-detection, voice-activity and embedding models now, so the first call does not wait for them.
 RUN python -m agent_worker.agent download-files
 
 # "start" is production mode. A named worker only receives rooms that ask for it (docs/decision.md D-060).

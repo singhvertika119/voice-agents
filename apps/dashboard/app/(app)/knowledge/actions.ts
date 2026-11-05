@@ -1,5 +1,6 @@
 "use server";
 
+import { createHmac } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -117,6 +118,32 @@ function smallTalk(text: string): "greeting" | "other" | null {
   return words.some((w) => GREETING.has(w)) ? "greeting" : "other";
 }
 
+// Question vectors come from the background server on Render, which runs the same embedding model as the voice agent
+// (multilingual-e5-base, D-122); Vercel cannot run it. Requests are signed with the service-role key both servers hold,
+// so the key itself is never sent. null when it cannot be reached: the search then uses keywords only.
+const BACKGROUND_URL = process.env.BACKGROUND_URL || "https://voice-background.onrender.com";
+async function embedQuestions(texts: string[]): Promise<number[][] | null> {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return null;
+  const body = JSON.stringify({ texts });
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const signature = createHmac("sha256", key).update(`${ts}.${body}`).digest("hex");
+  try {
+    const r = await fetch(`${BACKGROUND_URL}/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-vp-time": ts, "x-vp-signature": signature },
+      body,
+      signal: AbortSignal.timeout(8000),
+      cache: "no-store",
+    });
+    if (!r.ok) return null;
+    const vectors = (await r.json()).vectors as number[][];
+    return vectors?.length === texts.length ? vectors : null;
+  } catch {
+    return null;
+  }
+}
+
 // "Ask your knowledge": a chat that searches only the knowledge picked in the dashboard and answers from it.
 // sourceId "all" means every ready item. The passages used are returned too, so people can see where an answer came from.
 export async function chatKnowledge(sourceId: string, history: ChatTurn[]): Promise<ChatReply> {
@@ -155,15 +182,12 @@ export async function chatKnowledge(sourceId: string, history: ChatTurn[]): Prom
     // and the answer was "could not find" (D-114).
     const prevUser = turns.slice(0, -1).filter((t) => t.role === "user").at(-1)?.content ?? "";
     const texts = prevUser ? [question, `${prevUser}\n${question}`] : [question];
-    const emb = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST", headers, body: JSON.stringify({ model: "text-embedding-3-small", input: texts }),
-    });
-    if (!emb.ok) throw new Error("embedding failed");
-    const vecs: number[][] = (await emb.json()).data.map((d: { embedding: number[] }) => d.embedding);
+    const vecs = await embedQuestions(texts);
     type Row = { id: string; section: string | null; content: string; source_id: string };
-    const results = await Promise.all(vecs.map((vec, i) => supabase.rpc("match_chunks", {
+    // Without vectors, one keyword-only search (the combined text would add nothing to it).
+    const results = await Promise.all((vecs ?? [null]).map((vec) => supabase.rpc("match_chunks_local", {
       p_sources: sources.map((s) => s.id),
-      p_embedding: `[${vec.join(",")}]`,
+      p_embedding: vec ? `[${vec.join(",")}]` : null,
       p_query: question,   // the keyword half needs every word to match, so the combined text would rarely match anything
       p_k: 5,
     })));

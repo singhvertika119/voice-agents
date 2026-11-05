@@ -24,7 +24,7 @@ try:  # imported at the top on purpose: `download-files` only fetches models for
 except Exception:  # package missing: the agent falls back to voice-activity endpointing
     MultilingualModel = None
 
-from . import db, postcall, retranscribe, workspace
+from . import db, embed_runner, postcall, retranscribe, workspace
 from .call_metrics import CallMetricsLog
 from .config import REPO_ROOT, AgentConfig, from_dict, load_agent
 from .custom_tools import load_custom_tools
@@ -38,6 +38,8 @@ from .voice_agent import VoiceAgent, build_instructions
 
 load_dotenv(REPO_ROOT / ".env")
 log = logging.getLogger("agent")
+# The question-embedding model runs once in the shared model process, not in every call process (D-122).
+embed_runner.register()
 
 CONSENT_NOTICE_VERSION = "2026-10-v1"   # bump when the wording of the disclosure changes
 MSG_FULL = "Namaste. Abhi hamari saari lines vyast hain. Kripya thodi der baad dobara call karein. Dhanyavaad."
@@ -94,6 +96,7 @@ async def _wait_until_answered(ctx: JobContext, participant: rtc.Participant, ti
 
 
 async def entrypoint(ctx: JobContext):
+    embed_runner.use_in_this_call()
     tenant_id = version = call_row = None
     room = db.parse_room(ctx.room.name)   # dashboard test panel: room name carries the agent id
     agent_ref = room[1] if room else os.getenv("AGENT_ID")

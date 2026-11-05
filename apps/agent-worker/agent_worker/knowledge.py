@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from livekit.agents import RunContext, function_tool
 from vp_core import embeddings, supa
 
+SEARCH_FN = "match_chunks_local"   # hybrid search over the local-model vectors (migration 0009, D-122)
+
 log = logging.getLogger("knowledge")
 # At or below this, put everything in the prompt: no search, no extra latency. But every reply then resends the whole
 # text (about 4,700 tokens per request for the Front desk agent), which is what exhausts free-tier per-minute limits.
@@ -95,13 +97,13 @@ class KnowledgeBase:
         try:
             vec = await embeddings.embed_query(query)
         except Exception as e:
-            # Embeddings come from OpenAI; when that account is out of credit, keyword search still finds passages.
+            # The local model failed to load or answer: keyword search still finds passages.
             log.warning("embedding failed (%s); using keyword search only", str(e)[:120])
             return await self._keyword_search(query, t0)
         t1 = time.perf_counter()
         trace: dict = {}
         try:
-            rows = await supa.rpc("match_chunks", {"p_sources": self.source_ids, "p_embedding": embeddings.to_pg(vec),
+            rows = await supa.rpc(SEARCH_FN, {"p_sources": self.source_ids, "p_embedding": embeddings.to_pg(vec),
                                                    "p_query": query, "p_k": TOP_K, "p_tenant": self.tenant_id},
                                   timeout=RETRIEVE_TIMEOUT_S * 3, trace=trace)
         except Exception as e:
@@ -109,7 +111,7 @@ class KnowledgeBase:
             return None
         t2 = time.perf_counter()
         self.retrieval_ms.append(int((t2 - t0) * 1000))
-        # Split for D-118: the OpenAI embedding vs the database lookup (Supabase, Seoul).
+        # Split for D-118: the embedding (local model since D-122) vs the database lookup (Supabase, Seoul).
         self.search_parts.append({"embed_ms": int((t1 - t0) * 1000), "db_ms": int((t2 - t1) * 1000), **trace})
         return "\n\n".join(r["content"] for r in rows) if rows else ""
 
@@ -187,12 +189,12 @@ async def _core_facts(source_ids: list[str], tenant_id: str) -> str:
 
 
 async def _warm(kb: KnowledgeBase) -> None:
-    """One real search while the greeting plays. Opening the embedding connection alone was not enough: every call's
+    """One real search while the greeting plays (it also wakes the embedding model). Opening the connection alone was not enough: every call's
     first database search still took 0.68-0.96 s and later ones about 0.26 s (D-118), even with the database connection
     already open, so the search itself is run once here. Its timing is not counted in the call's search figures."""
     try:
         vec = await embeddings.embed_query("namaste, office kahan hai")
-        await supa.rpc("match_chunks", {"p_sources": kb.source_ids, "p_embedding": embeddings.to_pg(vec),
+        await supa.rpc(SEARCH_FN, {"p_sources": kb.source_ids, "p_embedding": embeddings.to_pg(vec),
                                         "p_query": "office", "p_k": TOP_K, "p_tenant": kb.tenant_id}, timeout=10)
     except Exception as e:
         log.info("search warm-up skipped: %s", str(e)[:100])
