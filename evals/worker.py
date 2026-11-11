@@ -39,7 +39,7 @@ STALE_MIN = 10        # no saved progress for this long means nobody is working 
 CURRENT: dict = {}    # the run this worker is on, so a shutdown can hand it back
 # Nightly checks (D-108): every live agent that took a call in the last week is tested again at 2 am IST, so a score
 # that drops while nobody changed anything (a provider update, an edited website) shows up the next morning.
-NIGHTLY = os.getenv("NIGHTLY_TESTS", "on")           # on (every night) | weekly (Sunday night) | off
+NIGHTLY = os.getenv("NIGHTLY_TESTS", "weekly")       # on (every night) | weekly (Sunday night, the default to save model credits, D-125) | off
 NIGHTLY_RUNS = int(os.getenv("NIGHTLY_RUNS", "1"))    # attempts per scenario; 1 keeps the nightly cost low
 NIGHTLY_HOUR_IST = 2
 NIGHTLY_ACTIVE_DAYS = 7

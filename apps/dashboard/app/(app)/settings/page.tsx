@@ -21,9 +21,9 @@ export default async function SettingsPage() {
   // Only the last 4 characters and the status: the key itself stays on the server (D-124).
   let keyInfo: OpenAIKeyInfo = null;
   if (member?.tenant_id) {
-    const { data: k } = await adminClient().from("tenant_api_keys").select("last4,status,checked_at")
+    const { data: k } = await adminClient().from("tenant_api_keys").select("*")
       .eq("tenant_id", member.tenant_id).eq("provider", "openai").maybeSingle();
-    keyInfo = (k as OpenAIKeyInfo) ?? null;
+    keyInfo = k ? { last4: k.last4, status: k.status, checked_at: k.checked_at, use_for: k.use_for ?? "calls" } : null;
   }
   return (
     <>

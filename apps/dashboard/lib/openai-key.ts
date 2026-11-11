@@ -1,10 +1,11 @@
 // Each workspace's own OpenAI key (bring your own key, docs/decision.md D-124). Server code only: the key is read
-// with the service key and decrypted here, and is never sent to the browser. Without a working key, chat uses the
-// free Groq model, the same backup the voice agent uses.
+// with the service key and decrypted here, and is never sent to the browser. The knowledge chat uses it only when
+// the owner chose "everything" (D-125); otherwise, or without a working key, it uses the free Groq model.
 import { createClient } from "@supabase/supabase-js";
 import { decryptSecret } from "@/lib/server-security";
 
 export type KeyStatus = "ok" | "no_credits" | "invalid" | "unchecked";
+export type KeyUse = "calls" | "everything";
 export type KeyCheck = KeyStatus | "unreachable";
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
@@ -42,14 +43,15 @@ function verdict(status: number, body: string): KeyStatus | null {
   return null;
 }
 
-type StoredKey = { tenantId: string; key: string; status: KeyStatus; checkedAt: string | null };
+type StoredKey = { tenantId: string; key: string; status: KeyStatus; checkedAt: string | null; useFor: KeyUse };
 
 async function loadKey(tenantId: string): Promise<StoredKey | null> {
-  const { data, error } = await adminClient().from("tenant_api_keys").select("secret_enc,status,checked_at")
+  // use_for arrived in 0012; a database without it is treated as "calls".
+  const { data, error } = await adminClient().from("tenant_api_keys").select("*")
     .eq("tenant_id", tenantId).eq("provider", "openai").maybeSingle();
   if (error || !data) return null;
   try {
-    return { tenantId, key: decryptSecret(data.secret_enc), status: data.status as KeyStatus, checkedAt: data.checked_at };
+    return { tenantId, key: decryptSecret(data.secret_enc), status: data.status as KeyStatus, checkedAt: data.checked_at, useFor: (data.use_for as KeyUse) ?? "calls" };
   } catch {
     return null;
   }
@@ -70,7 +72,7 @@ function worthTrying(k: StoredKey): boolean {
 // Throws only when neither can answer.
 export async function chatCompletion(tenantId: string, messages: ChatMessage[], opts: { model?: string; temperature?: number; maxTokens: number }): Promise<string> {
   const k = await loadKey(tenantId);
-  if (k && worthTrying(k)) {
+  if (k && k.useFor === "everything" && worthTrying(k)) {
     try {
       const r = await fetch(OPENAI_URL, {
         method: "POST",

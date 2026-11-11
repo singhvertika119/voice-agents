@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import AgentSession, JobContext, JobProcess, MetricsCollectedEvent, WorkerOptions, cli, llm
 from livekit.plugins import silero
-from vp_core import tenant_keys
+from vp_core import llm_chat, tenant_keys
 
 try:  # imported at the top on purpose: `download-files` only fetches models for plugins that have been imported (D-077)
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -155,6 +155,15 @@ async def entrypoint(ctx: JobContext):
             part.prewarm()
         except Exception as e:
             log.warning("prewarm failed: %s", e)
+    if openai_key and isinstance(stack["llm"], llm.FallbackAdapter):
+        # The workspace's key failed in this call (often: its credits ran out). Check why once and save it, so the
+        # next calls start with the free model instead of trying the dead key first on every reply (D-125).
+        checked: list[asyncio.Task] = []
+
+        @stack["llm"].on("llm_availability_changed")
+        def _key_failed(ev):
+            if not ev.available and getattr(ev.llm, "_vp_workspace_key", False) and not checked:
+                checked.append(asyncio.create_task(llm_chat.verify(openai_key)))
     session = AgentSession(vad=ctx.proc.userdata["vad"], turn_detection=_turn_detector(cfg), min_endpointing_delay=0.3, **stack)
     agent = VoiceAgent(cfg, kb, tools=tools, memory_block=memory_block, extra_rules=extra_rules)
     want_recording = bool(tenant_id and mode == "normal" and settings.get("record_calls", True))

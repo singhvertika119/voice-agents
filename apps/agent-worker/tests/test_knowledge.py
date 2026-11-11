@@ -71,3 +71,12 @@ def test_acknowledgements_are_not_greetings():
         assert is_acknowledgement(t), t
     for t in ["Hello", "bye", "Is integrations available", "namaste"]:
         assert not is_acknowledgement(t), t
+
+
+def test_compact_lines_drops_only_repeats():
+    from agent_worker.knowledge import compact_lines
+    text = ("Email Address: support@x.in\nOn every page: Products Face Machine Live polls HRMS Payroll\n"
+            "Face Machine Live polls\nsupport@x.in\nEmail Address: support@x.in\nClosed on Sundays\nOK\n\n")
+    out = compact_lines(text).split("\n")
+    assert out == ["Email Address: support@x.in", "On every page: Products Face Machine Live polls HRMS Payroll",
+                   "Closed on Sundays", "OK"]   # short lines are kept even if they appear inside another line

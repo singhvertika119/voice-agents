@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { Check } from "lucide-react";
 import { Badge, Button, Card, Field, inputCls } from "@/components/ui";
-import { eraseCaller, recheckOpenAIKey, removeOpenAIKey, saveOpenAIKey, saveSettings, type FormState } from "@/app/(app)/settings/actions";
+import { eraseCaller, recheckOpenAIKey, removeOpenAIKey, saveKeyUse, saveOpenAIKey, saveSettings, type FormState } from "@/app/(app)/settings/actions";
 
 export type SettingsValues = {
   days: number[]; start: string; end: string; handoff_phone: string; retention_days: number;
@@ -120,7 +120,12 @@ export function EraseForm({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-export type OpenAIKeyInfo = { last4: string; status: "ok" | "no_credits" | "invalid" | "unchecked"; checked_at: string | null } | null;
+export type OpenAIKeyInfo = { last4: string; status: "ok" | "no_credits" | "invalid" | "unchecked"; checked_at: string | null; use_for: "calls" | "everything" } | null;
+
+const KEY_USES = [
+  ["calls", "Calls only (cheapest)", "Live calls, and the agent in test conversations, use OpenAI. Summaries, the test reviewer, knowledge checks and the knowledge chat use the free model."],
+  ["everything", "Everything", "All of the above use OpenAI. Summaries and test reviews are a little more accurate, and it costs more."],
+] as const;
 
 const KEY_BADGE = {
   ok: ["success", "Working"], no_credits: ["warning", "No credits"], invalid: ["danger", "Not accepted"], unchecked: ["neutral", "Not checked yet"],
@@ -131,14 +136,15 @@ export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit:
   const [state, save, saving] = useActionState<FormState, FormData>(saveOpenAIKey, null);
   const [checkState, recheck, checking] = useActionState<FormState>(recheckOpenAIKey, null);
   const [removeState, remove, removing] = useActionState<FormState>(removeOpenAIKey, null);
+  const [useForState, saveUse, savingUse] = useActionState<FormState, FormData>(saveKeyUse, null);
   const [tone, label] = info ? KEY_BADGE[info.status] : (["neutral", "None"] as const);
   return (
     <Card className="p-5 flex flex-col gap-4">
       <div>
         <h2 className="text-base font-semibold">Your OpenAI key</h2>
         <p className="text-[13px] text-ink-muted">
-          Your agents, call summaries, tests and the knowledge chat use OpenAI on your own account, so you pay OpenAI directly.
-          Without a working key they use a free model instead, which is a little less accurate. Get a key at platform.openai.com.
+          Your agents use OpenAI on your own account, so you pay OpenAI directly. Without a working key they use a free
+          model instead, which is a little less accurate. Get a key at platform.openai.com.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -158,6 +164,23 @@ export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit:
           <Result state={state} />
         </div>
       </form>
+      {info && (
+        <form action={saveUse} className="flex flex-col gap-3">
+          <fieldset className="flex flex-col gap-2" disabled={!canEdit}>
+            <legend className="text-sm font-medium mb-1">Use the key for</legend>
+            {KEY_USES.map(([value, title, help]) => (
+              <label key={value} className="flex items-start gap-3 text-sm leading-snug">
+                <input type="radio" name="use_for" value={value} defaultChecked={info.use_for === value} className="mt-0.5 size-4 accent-ink" />
+                <span><span className="font-medium">{title}</span><br /><span className="text-[13px] text-ink-muted">{help}</span></span>
+              </label>
+            ))}
+          </fieldset>
+          <div className="flex flex-wrap items-center gap-4">
+            <Button variant="secondary" disabled={savingUse || !canEdit}>{savingUse ? "Saving..." : "Save choice"}</Button>
+            <Result state={useForState} />
+          </div>
+        </form>
+      )}
       {info && (
         <div className="flex flex-wrap items-center gap-3">
           <form action={recheck}><Button variant="secondary" disabled={checking || !canEdit}>{checking ? "Checking..." : "Check again"}</Button></form>

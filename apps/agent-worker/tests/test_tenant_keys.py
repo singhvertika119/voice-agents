@@ -88,7 +88,7 @@ def test_classify():
 
 def test_working_key_uses_openai(monkeypatch):
     calls = fake_http(monkeypatch, lambda r: reply("hello"))
-    out = asyncio.run(llm_chat.chat([{"role": "user", "content": "hi"}], key=TenantKey(T, "sk-own", "ok")))
+    out = asyncio.run(llm_chat.chat([{"role": "user", "content": "hi"}], key=TenantKey(T, "sk-own", "ok", use_for="everything")))
     assert out == "hello" and len(calls) == 1
     assert calls[0].url.host == "api.openai.com" and calls[0].headers["authorization"] == "Bearer sk-own"
 
@@ -102,7 +102,7 @@ def test_no_key_uses_free_model(monkeypatch):
 
 def test_out_of_credits_falls_back_and_is_recorded(monkeypatch, env):
     calls = fake_http(monkeypatch, lambda r: NO_CREDITS if r.url.host == "api.openai.com" else reply("ok"))
-    key = TenantKey(T, "sk-own", "ok")
+    key = TenantKey(T, "sk-own", "ok", use_for="everything")
     tenant_keys.use(key)
     assert asyncio.run(llm_chat.chat([{"role": "user", "content": "hi"}])) == "ok"
     assert [c.url.host for c in calls] == ["api.openai.com", "api.groq.com"]   # no retries on a refused key
@@ -112,7 +112,7 @@ def test_out_of_credits_falls_back_and_is_recorded(monkeypatch, env):
 def test_recovered_key_is_marked_ok(monkeypatch, env):
     fake_http(monkeypatch, lambda r: reply("ok"))
     old = datetime.now(timezone.utc) - timedelta(hours=2)
-    asyncio.run(llm_chat.chat([{"role": "user", "content": "hi"}], key=TenantKey(T, "sk-own", "no_credits", old)))
+    asyncio.run(llm_chat.chat([{"role": "user", "content": "hi"}], key=TenantKey(T, "sk-own", "no_credits", old, "everything")))
     assert env[-1]["status"] == "ok"
 
 
@@ -126,3 +126,35 @@ def test_live_chain_skips_a_failing_key(monkeypatch):
     assert providers._llm(spec, 100) is None
     tenant_keys.use(TenantKey(T, "sk-own", "ok"))
     assert providers._llm(spec, 100) is not None
+
+
+def test_calls_only_key_is_not_used_for_background_work(monkeypatch, env):
+    calls = fake_http(monkeypatch, lambda r: reply("free"))
+    assert asyncio.run(llm_chat.chat([{"role": "user", "content": "hi"}], key=TenantKey(T, "sk-own", "ok"))) == "free"
+    assert [c.url.host for c in calls] == ["api.groq.com"] and not env
+
+
+def test_live_chain_uses_a_calls_only_key(monkeypatch):
+    from agent_worker import providers
+    tenant_keys.use(TenantKey(T, "sk-own", "ok"))   # default use_for is "calls"
+    model = providers._llm({"provider": "openai", "model": "gpt-4o-mini"}, 100)
+    assert model is not None and model._vp_workspace_key
+
+
+def test_verify_saves_what_openai_says(monkeypatch, env):
+    fake_http(monkeypatch, lambda r: NO_CREDITS)
+    assert asyncio.run(llm_chat.verify(TenantKey(T, "sk-own", "ok"))) == "no_credits"
+    assert env[-1]["status"] == "no_credits"
+    fake_http(monkeypatch, lambda r: httpx.Response(503))
+    n = len(env)
+    assert asyncio.run(llm_chat.verify(TenantKey(T, "sk-own", "ok"))) is None and len(env) == n   # a passing problem: nothing saved
+
+
+def test_load_works_before_migration_0012(monkeypatch):
+    async def select(table, **params):
+        if "use_for" in params["select"]:
+            raise RuntimeError("column tenant_api_keys.use_for does not exist")
+        return [{"secret_enc": secrets.encrypt("sk-abc"), "status": "ok", "checked_at": None}]
+    monkeypatch.setattr(tenant_keys.supa, "select", select)
+    k = asyncio.run(tenant_keys.load(T))
+    assert k.value == "sk-abc" and k.use_for == "calls" and not k.for_background()

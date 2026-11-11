@@ -27,10 +27,15 @@ class TenantKey:
     value: str
     status: str                    # ok | no_credits | invalid | unchecked
     checked_at: datetime | None = None
+    use_for: str = "calls"         # calls | everything (D-125): background work uses the key only with "everything"
 
     def live_ok(self) -> bool:
         """Use it in a live call? Only when it is not known to fail: a failing first attempt would delay every reply."""
         return self.status in ("ok", "unchecked")
+
+    def for_background(self) -> bool:
+        """Use it for summaries, the test caller and reviewer, quality checks? Only when the owner chose "everything"."""
+        return self.use_for == "everything" and self.worth_trying()
 
     def worth_trying(self) -> bool:
         """Use it in background work (summaries, tests)? Also retry a failed key now and then: credits may have been added."""
@@ -61,11 +66,16 @@ async def load(tenant_id: str | None) -> TenantKey | None:
         return hit[1]
     key = None
     try:
-        rows = await supa.select("tenant_api_keys", select="secret_enc,status,checked_at",
-                                 tenant_id=f"eq.{tenant_id}", provider="eq.openai")
+        try:
+            rows = await supa.select("tenant_api_keys", select="secret_enc,status,checked_at,use_for",
+                                     tenant_id=f"eq.{tenant_id}", provider="eq.openai")
+        except Exception:  # noqa: BLE001  database without 0012: the key still works for calls
+            rows = await supa.select("tenant_api_keys", select="secret_enc,status,checked_at",
+                                     tenant_id=f"eq.{tenant_id}", provider="eq.openai")
         if rows:
             r = rows[0]
-            key = TenantKey(tenant_id, secrets.decrypt(r["secret_enc"]), r["status"], _parse_time(r.get("checked_at")))
+            key = TenantKey(tenant_id, secrets.decrypt(r["secret_enc"]), r["status"], _parse_time(r.get("checked_at")),
+                            r.get("use_for") or "calls")
     except Exception as e:  # noqa: BLE001
         log.warning("workspace %s: OpenAI key not loaded (%s); using the free model", tenant_id, str(e)[:120])
         key = None

@@ -138,6 +138,21 @@ export async function recheckOpenAIKey(_prev: FormState): Promise<FormState> {
   return { ok: check === "ok", message: msg[check] };
 }
 
+// What the key is used for (D-125): "calls" keeps OpenAI for live calls only, the cheapest choice.
+export async function saveKeyUse(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { tenantId, ok } = await keyAdmin();
+  if (!ok || !tenantId) return { ok: false, message: "Only an owner or admin can change this." };
+  const useFor = String(formData.get("use_for"));
+  if (!["calls", "everything"].includes(useFor)) return { ok: false, message: "Pick one of the two options." };
+  const { error } = await adminClient().from("tenant_api_keys").update({ use_for: useFor, updated_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId).eq("provider", "openai");
+  if (error) {
+    return { ok: false, message: "Could not save. " + (error.message.includes("use_for") ? "The database update 0012 has not been applied yet." : error.message) };
+  }
+  revalidatePath("/settings");
+  return { ok: true, message: useFor === "calls" ? "Saved. OpenAI is used for calls only." : "Saved. OpenAI is used for everything." };
+}
+
 export async function removeOpenAIKey(_prev: FormState): Promise<FormState> {
   void _prev;
   const { tenantId, ok } = await keyAdmin();

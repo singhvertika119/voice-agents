@@ -1,6 +1,7 @@
 """One chat-completion helper for background work: call summaries, the knowledge quality check, test conversations.
 
-Uses the workspace's own OpenAI key when it has a working one (D-124), otherwise the free Groq model. If OpenAI
+Uses the workspace's own OpenAI key when it has a working one and the owner chose to use it for everything (D-124,
+D-125); by default the key is kept for live calls and this work runs on the free Groq model. If OpenAI
 refuses the key (no credits, invalid), that is saved on the key and the same request goes to Groq, so the work
 still gets done. Live-call replies do not come through here: they use the LiveKit model chain in providers.py.
 """
@@ -45,12 +46,27 @@ async def _post(url: str, auth: str, body: dict, timeout: float, check_key: bool
     raise RuntimeError("unreachable")
 
 
+async def verify(key: TenantKey) -> str | None:
+    """Ask OpenAI once (a 1-token reply) whether the key still works, and save the answer: ok, no_credits or invalid.
+    None when OpenAI could not be reached. Used after a live call saw the key fail (D-125)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(OPENAI_URL, headers={"Authorization": f"Bearer {key.value}"},
+                             json={"model": "gpt-4o-mini", "max_tokens": 1, "messages": [{"role": "user", "content": "ok"}]})
+    except Exception:  # noqa: BLE001
+        return None
+    status = "ok" if r.status_code == 200 else tenant_keys.classify(r.status_code, r.text)
+    if status:
+        await tenant_keys.record(key, status)
+    return status
+
+
 async def chat(messages: list[dict], *, model: str = "gpt-4.1-mini", temperature: float = 0.7, json_mode: bool = False,
                max_tokens: int = 400, timeout: float = 60, key: TenantKey | None | object = _UNSET) -> str:
     """The reply text. key defaults to the current job's workspace key (tenant_keys.use)."""
     k = tenant_keys.current() if key is _UNSET else key
     fmt = {"response_format": {"type": "json_object"}} if json_mode else {}
-    if isinstance(k, TenantKey) and k.worth_trying():
+    if isinstance(k, TenantKey) and k.for_background():
         try:
             out = await _post(OPENAI_URL, k.value, {"model": model, "messages": messages, "temperature": temperature,
                                                     "max_tokens": max_tokens, **fmt}, timeout, check_key=True)

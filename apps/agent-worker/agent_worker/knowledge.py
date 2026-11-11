@@ -185,7 +185,23 @@ async def _core_facts(source_ids: list[str], tenant_id: str) -> str:
         seen.add(r["content"])
         out.append(r["content"])
         used += n
-    return "\n".join(out)
+    return compact_lines("\n".join(out))
+
+
+def compact_lines(text: str) -> str:
+    """Drop lines that repeat what is already there. Website sections repeat the menu and footer: the product list
+    appears on one long line and again one product per line, and some lines appear twice. Every token of the key
+    facts is sent with every reply (D-125). A line is dropped only when its text is already in the kept text, so no
+    fact is lost."""
+    kept: list[str] = []
+    seen: list[str] = []
+    for line in text.split("\n"):
+        n = " ".join(line.split()).lower()
+        if not n or any(n == k or (len(n) >= 12 and n in k) for k in seen):
+            continue
+        kept.append(line.rstrip())
+        seen.append(n)
+    return "\n".join(kept)
 
 
 async def _warm(kb: KnowledgeBase) -> None:

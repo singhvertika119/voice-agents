@@ -101,8 +101,10 @@ def _llm(spec: dict, max_tokens: int):
         # credits or invalid: skip OpenAI so the chain starts with the free model instead of failing first every turn.
         key = tenant_keys.current()
         if key and key.live_ok():
-            return openai.LLM(model=spec["model"], api_key=key.value, temperature=TEMPERATURE,
-                              max_completion_tokens=max_tokens)
+            model = openai.LLM(model=spec["model"], api_key=key.value, temperature=TEMPERATURE,
+                               max_completion_tokens=max_tokens)
+            model._vp_workspace_key = True   # lets the call notice when this key starts failing (agent.py)
+            return model
     return None
 
 
