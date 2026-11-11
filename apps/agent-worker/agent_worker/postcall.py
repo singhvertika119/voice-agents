@@ -6,7 +6,8 @@ import json
 import logging
 import os
 
-import httpx
+from vp_core import llm_chat
+from vp_core.tenant_keys import TenantKey
 
 from .pii import redact
 
@@ -16,8 +17,9 @@ MAX_TRANSCRIPT_CHARS = 12000
 
 
 async def summarize(turns: list[dict], prior_summary: str = "", prior_facts: dict | None = None,
-                    tool_log: list | None = None, with_memory: bool = True) -> dict | None:
-    """Returns {summary, intent, outcome, commitments, open_items, language, name, rolling_summary, facts} or None."""
+                    tool_log: list | None = None, with_memory: bool = True, key: TenantKey | None = None) -> dict | None:
+    """key: the workspace's own OpenAI key (D-124); without a working one the free model writes the summary.
+    Returns {summary, intent, outcome, commitments, open_items, language, name, rolling_summary, facts} or None."""
     lines = [f"{'CALLER' if t['speaker'] == 'caller' else 'AGENT'}: {redact(t['text'])}" for t in turns if t.get("text")]
     if not lines:
         return None
@@ -40,12 +42,9 @@ async def summarize(turns: list[dict], prior_summary: str = "", prior_facts: dic
         "they said it, else empty)."
     )
     try:
-        async with httpx.AsyncClient(timeout=45) as c:
-            r = await c.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
-                             json={"model": MODEL, "temperature": 0, "response_format": {"type": "json_object"},
-                                   "messages": [{"role": "user", "content": prompt}], "max_tokens": 900})
-            r.raise_for_status()
-        out = json.loads(r.json()["choices"][0]["message"]["content"])
+        text = await llm_chat.chat([{"role": "user", "content": prompt}], model=MODEL, temperature=0, json_mode=True,
+                                   max_tokens=900, timeout=45, key=key)
+        out = json.loads(text)
         if out.get("outcome") not in ("resolved", "handed_off", "callback", "dropped"):
             out["outcome"] = None
         return out

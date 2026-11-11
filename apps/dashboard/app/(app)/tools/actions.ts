@@ -3,7 +3,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
-import { assertPublicHttps, encryptSecret, sign } from "@/lib/server-security";
+import { assertPublicHttps, decryptSecret, encryptSecret, sign } from "@/lib/server-security";
 
 export type ToolState = { ok: boolean; message: string; at: number } | null;
 const fail = (message: string): ToolState => ({ ok: false, message, at: Date.now() });
@@ -101,14 +101,7 @@ export async function testTool(id: string, _prev: ToolState, formData: FormData)
   if (t.auth_header) {
     const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const { data: s } = await admin.from("tool_secrets").select("secret_enc").eq("tool_id", id).single();
-    if (s) {
-      const { createDecipheriv } = await import("node:crypto");
-      const key = Buffer.from(process.env.TOOL_SECRET_KEY ?? "", "base64");
-      const buf = Buffer.from(s.secret_enc, "base64");
-      const d = createDecipheriv("aes-256-gcm", key, buf.subarray(0, 12));
-      d.setAuthTag(buf.subarray(buf.length - 16));
-      secret = Buffer.concat([d.update(buf.subarray(12, buf.length - 16)), d.final()]).toString("utf8");
-    }
+    if (s) secret = decryptSecret(s.secret_enc);
   }
   const body = JSON.stringify(args);
   const ts = String(Math.floor(Date.now() / 1000));

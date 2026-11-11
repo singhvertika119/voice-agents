@@ -11,6 +11,7 @@ import httpx
 from livekit.agents import llm, stt, tts
 from google.genai import types as genai_types
 from livekit.plugins import cartesia, deepgram, google, openai, sarvam
+from vp_core import tenant_keys
 
 from .config import AgentConfig
 from .speech_chunks import ClauseTokenizer
@@ -95,8 +96,13 @@ def _llm(spec: dict, max_tokens: int):
         return google.LLM(model=spec["model"], api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
                           temperature=TEMPERATURE, max_output_tokens=max_tokens,
                           http_options=genai_types.HttpOptions(timeout=GEMINI_TIMEOUT_MS))
-    if p == "openai" and _has("OPENAI_API_KEY"):  # switch via YAML once an OpenAI key exists
-        return openai.LLM(model=spec["model"], temperature=TEMPERATURE, max_completion_tokens=max_tokens)
+    if p == "openai":
+        # The workspace's own key (D-124), set for this call by tenant_keys.use. No key, or one known to be out of
+        # credits or invalid: skip OpenAI so the chain starts with the free model instead of failing first every turn.
+        key = tenant_keys.current()
+        if key and key.live_ok():
+            return openai.LLM(model=spec["model"], api_key=key.value, temperature=TEMPERATURE,
+                              max_completion_tokens=max_tokens)
     return None
 
 

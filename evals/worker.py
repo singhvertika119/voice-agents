@@ -23,7 +23,7 @@ load_dotenv(ROOT / ".env", override=True)
 from agent_worker import db, workspace  # noqa: E402
 from agent_worker.config import from_dict  # noqa: E402
 from agent_worker.knowledge import load_knowledge  # noqa: E402
-from vp_core import heartbeat, supa  # noqa: E402
+from vp_core import heartbeat, supa, tenant_keys  # noqa: E402
 
 from evals.runner import scenarios as sc  # noqa: E402
 from evals.runner.suite import run_suite  # noqa: E402
@@ -94,6 +94,9 @@ async def knowledge_questions(tenant: str, agent_id: str, ktext: str) -> list[di
 
 async def run_job(job: dict) -> None:
     tenant, agent_id = job["tenant_id"], job["agent_id"]
+    # The workspace's own OpenAI key (D-124) for the agent, the simulated caller and the reviewer; set for this job
+    # only, and the free model is used without one.
+    tenant_keys.use(await tenant_keys.load(tenant))
     scheduled = bool((job.get("results") or {}).get("scheduled"))
     await report_progress(job["id"], "preparing", scheduled=scheduled)
     check = {"at": 0.0, "stopped": False}

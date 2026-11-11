@@ -61,6 +61,8 @@ async def main() -> int:
         cfg = from_dict(a.agent, pub["agent"]["name"], pub["config"])
         kb = await load_knowledge(cfg.knowledge_sources, pub["agent"]["tenant_id"], cfg.knowledge_mode)
         ktext = kb.prompt_text
+        from vp_core import tenant_keys
+        tenant_keys.use(await tenant_keys.load(pub["agent"]["tenant_id"]))   # the workspace's own OpenAI key (D-124)
     else:
         cfg = load_agent(a.agent)
     ktext = (cfg.knowledge + "\n" + ktext).strip()

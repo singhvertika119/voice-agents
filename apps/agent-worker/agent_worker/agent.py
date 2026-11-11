@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import AgentSession, JobContext, JobProcess, MetricsCollectedEvent, WorkerOptions, cli, llm
 from livekit.plugins import silero
+from vp_core import tenant_keys
 
 try:  # imported at the top on purpose: `download-files` only fetches models for plugins that have been imported (D-077)
     from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -110,6 +111,8 @@ async def entrypoint(ctx: JobContext):
     else:                                    # local mode: YAML file
         cfg = load_agent(agent_ref)
 
+    # The workspace's own OpenAI key (D-124), read while the call connects so it adds no wait.
+    key_task = asyncio.create_task(tenant_keys.load(tenant_id))
     await ctx.connect()
     participant = await ctx.wait_for_participant()
     await _wait_until_answered(ctx, participant)
@@ -144,6 +147,8 @@ async def entrypoint(ctx: JobContext):
     greeting = {"normal": cfg.greeting.strip(), "degraded": MSG_DEGRADED, "full": MSG_FULL, "disabled": MSG_OFF}[mode]
 
     await probe_providers()
+    openai_key = await key_task
+    tenant_keys.use(openai_key)   # build_stack puts OpenAI first only with a working key; otherwise the free model
     stack = build_stack(cfg)
     for part in stack.values():  # open provider connections now, not on the first caller turn
         try:
@@ -224,7 +229,8 @@ async def entrypoint(ctx: JobContext):
                 return {}
             use_memory = bool(contact_id) and settings.get("memory_enabled", True)
             prior, facts = await workspace.previous_summary(contact_id, agent_ref) if use_memory else ("", {})
-            s = await postcall.summarize(conversation, prior, facts, state.tool_log, with_memory=use_memory)
+            s = await postcall.summarize(conversation, prior, facts, state.tool_log, with_memory=use_memory,
+                                         key=openai_key)
             if not s:
                 return {}
             # Older models sometimes leave rolling_summary out. Never lose the call: fall back to the previous

@@ -1,6 +1,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui";
-import { EraseForm, SettingsForm, type SettingsValues } from "@/components/settings-forms";
+import { EraseForm, OpenAIKeyForm, SettingsForm, type OpenAIKeyInfo, type SettingsValues } from "@/components/settings-forms";
+import { adminClient } from "@/lib/openai-key";
 
 export default async function SettingsPage() {
   const supabase = await supabaseServer();
@@ -17,13 +18,20 @@ export default async function SettingsPage() {
     record_calls: s?.record_calls ?? true,
   };
   const canEdit = ["owner", "admin"].includes(member?.role ?? "");
+  // Only the last 4 characters and the status: the key itself stays on the server (D-124).
+  let keyInfo: OpenAIKeyInfo = null;
+  if (member?.tenant_id) {
+    const { data: k } = await adminClient().from("tenant_api_keys").select("last4,status,checked_at")
+      .eq("tenant_id", member.tenant_id).eq("provider", "openai").maybeSingle();
+    keyInfo = (k as OpenAIKeyInfo) ?? null;
+  }
   return (
     <>
       <PageHeader title="Settings" intro="Hours, limits and privacy for your workspace." />
       {error && <p role="alert" className="text-[13px] text-danger-fg">Settings are not available yet: the database update for them has not been applied.</p>}
       <div className="flex flex-wrap gap-6 items-start">
         <div className="flex-[999_1_480px] min-w-0"><SettingsForm v={v} canEdit={canEdit} /></div>
-        <aside className="flex-[1_1_320px] min-w-0"><EraseForm canEdit={canEdit} /></aside>
+        <aside className="flex-[1_1_320px] min-w-0 flex flex-col gap-6"><OpenAIKeyForm info={keyInfo} canEdit={canEdit} /><EraseForm canEdit={canEdit} /></aside>
       </div>
     </>
   );

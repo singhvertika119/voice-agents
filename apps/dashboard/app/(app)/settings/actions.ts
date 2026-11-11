@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseServer } from "@/lib/supabase/server";
 import { toE164 } from "@/lib/phone";
+import { adminClient, checkOpenAIKey, type KeyCheck } from "@/lib/openai-key";
+import { decryptSecret, encryptSecret } from "@/lib/server-security";
 
 export type FormState = { ok: boolean; message: string } | null;
 
@@ -76,4 +78,72 @@ export async function eraseCaller(_prev: FormState, formData: FormData): Promise
     ok: true,
     message: `Erased ${r.calls} call${r.calls === 1 ? "" : "s"} with transcripts and ${paths.length} recording${paths.length === 1 ? "" : "s"}, ${r.contacts} saved profile${r.contacts === 1 ? "" : "s"} and ${r.callbacks} callback request${r.callbacks === 1 ? "" : "s"}.`,
   };
+}
+
+// ---------------------------------------------------------------- the workspace's own OpenAI key (D-124)
+// The key is checked with OpenAI, encrypted here and stored where only server code can read it. It is never shown
+// again: Settings shows only its last four characters and whether it works.
+const CHECK_MESSAGES: Record<KeyCheck, string> = {
+  ok: "Saved. The key works.",
+  no_credits: "Saved, but this OpenAI account has no credits left, so the free model is used until you add credits.",
+  invalid: "OpenAI did not accept this key. Check that you copied all of it.",
+  unchecked: "Saved.",
+  unreachable: "Saved, but OpenAI could not be reached to check it. It will be checked on first use.",
+};
+
+async function keyAdmin() {
+  const { tenantId, role } = await ctx();
+  const ok = !!tenantId && ["owner", "admin"].includes(role ?? "");
+  return { tenantId, ok };
+}
+
+export async function saveOpenAIKey(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { tenantId, ok } = await keyAdmin();
+  if (!ok || !tenantId) return { ok: false, message: "Only an owner or admin can change the OpenAI key." };
+  const key = String(formData.get("openai_key") ?? "").trim();
+  if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(key)) return { ok: false, message: "That does not look like an OpenAI key. It starts with sk- and is long." };
+  const check = await checkOpenAIKey(key);
+  if (check === "invalid") return { ok: false, message: CHECK_MESSAGES.invalid };
+  const supabase = await supabaseServer();
+  const { data: user } = await supabase.auth.getUser();
+  const { error } = await adminClient().from("tenant_api_keys").upsert({
+    tenant_id: tenantId, provider: "openai", secret_enc: encryptSecret(key), last4: key.slice(-4),
+    status: check === "unreachable" ? "unchecked" : check,
+    checked_at: check === "unreachable" ? null : new Date().toISOString(),
+    updated_at: new Date().toISOString(), updated_by: user.user?.id ?? null,
+  });
+  if (error) {
+    return { ok: false, message: "Could not save. " + (error.message.includes("tenant_api_keys") ? "The database update for keys (0011) has not been applied yet." : error.message) };
+  }
+  revalidatePath("/settings");
+  return { ok: check !== "no_credits", message: CHECK_MESSAGES[check] };
+}
+
+export async function recheckOpenAIKey(_prev: FormState): Promise<FormState> {
+  void _prev;
+  const { tenantId, ok } = await keyAdmin();
+  if (!ok || !tenantId) return { ok: false, message: "Only an owner or admin can check the OpenAI key." };
+  const db = adminClient();
+  const { data } = await db.from("tenant_api_keys").select("secret_enc").eq("tenant_id", tenantId).eq("provider", "openai").maybeSingle();
+  if (!data) return { ok: false, message: "No key is saved." };
+  const check = await checkOpenAIKey(decryptSecret(data.secret_enc));
+  if (check !== "unreachable") {
+    await db.from("tenant_api_keys").update({ status: check, checked_at: new Date().toISOString() }).eq("tenant_id", tenantId).eq("provider", "openai");
+  }
+  revalidatePath("/settings");
+  const msg: Record<KeyCheck, string> = {
+    ok: "The key works.", no_credits: "Still no credits on this OpenAI account. The free model is being used.",
+    invalid: "OpenAI no longer accepts this key. Save a new one.", unchecked: "", unreachable: "OpenAI could not be reached. Try again in a moment.",
+  };
+  return { ok: check === "ok", message: msg[check] };
+}
+
+export async function removeOpenAIKey(_prev: FormState): Promise<FormState> {
+  void _prev;
+  const { tenantId, ok } = await keyAdmin();
+  if (!ok || !tenantId) return { ok: false, message: "Only an owner or admin can remove the OpenAI key." };
+  const { error } = await adminClient().from("tenant_api_keys").delete().eq("tenant_id", tenantId).eq("provider", "openai");
+  if (error) return { ok: false, message: "Could not remove. " + error.message };
+  revalidatePath("/settings");
+  return { ok: true, message: "Removed. Your agents now use the free model." };
 }

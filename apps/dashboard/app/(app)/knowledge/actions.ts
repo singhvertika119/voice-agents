@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
+import { chatCompletion } from "@/lib/openai-key";
 
 export type AddState = { ok: boolean; message: string; at: number } | null;
 type Passage = { section: string | null; content: string; source: string };
@@ -150,31 +151,23 @@ export async function chatKnowledge(sourceId: string, history: ChatTurn[]): Prom
   const turns = history.slice(-8).filter((t) => t.content.trim());
   const question = turns.at(-1)?.role === "user" ? turns.at(-1)!.content.trim().slice(0, 1000) : "";
   if (question.length < 2) return { answer: "", passages: [], error: "Type a question first." };
-  const supabase = await supabaseServer();
+  const { supabase, tenantId } = await member();
+  if (!tenantId) return { answer: "", passages: [], error: "Sign in again to use the chat." };
   let q = supabase.from("knowledge_sources").select("id,name").eq("status", "ready");
   if (sourceId !== "all") q = q.eq("id", sourceId);
   const { data: sources } = await q;
   if (!sources?.length) {
     return { answer: "", passages: [], error: sourceId === "all" ? "Nothing is ready yet. Add knowledge and wait for it to finish." : "This item is not ready. Pick another one." };
   }
-  const key = process.env.OPENAI_API_KEY;
-  const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  // The workspace's own OpenAI key when it has a working one, otherwise the free model (D-124).
   const chit = smallTalk(question);
   try {
     if (chit) {
       const hint = chit === "greeting"
         ? "The user only greeted you. Greet them back in a few words in their language and ask what they would like to know."
         : "The user only acknowledged, thanked you or said goodbye. Reply with one to five words in their language, such as \"Sure.\" or \"Theek hai.\". Do not offer more help.";
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: "gpt-4o-mini", temperature: 0.2, max_tokens: 40,
-          messages: [{ role: "system", content: hint }, { role: "user", content: question }],
-        }),
-      });
-      if (!r.ok) throw new Error("chat failed");
-      return { answer: (await r.json()).choices?.[0]?.message?.content?.trim() || "Ji.", passages: [] };
+      const reply = await chatCompletion(tenantId, [{ role: "system", content: hint }, { role: "user", content: question }], { maxTokens: 40 });
+      return { answer: reply || "Ji.", passages: [] };
     }
     // The question is always searched on its own. A follow-up ("aur Sunday ko?") means little alone, so when there was
     // an earlier question it is also searched together with it, and the two result lists are merged. Searching only
@@ -205,23 +198,12 @@ export async function chatKnowledge(sourceId: string, history: ChatTurn[]): Prom
     const context = passages.length
       ? passages.map((p, i) => `[${i + 1}] (${p.source}${p.section ? `, ${p.section}` : ""})\n${p.content}`).join("\n\n")
       : "(no passage matched)";
-    const chat = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0.2,
-        max_tokens: 400,
-        messages: [
-          { role: "system", content: CHAT_RULES },
-          ...turns.slice(0, -1).map((t) => ({ role: t.role, content: t.content.slice(0, 2000) })),
-          { role: "system", content: `Passages for the next question:\n${context}` },
-          { role: "user", content: question },
-        ],
-      }),
-    });
-    if (!chat.ok) throw new Error("chat failed");
-    const answer: string = (await chat.json()).choices?.[0]?.message?.content?.trim() ?? "";
+    const answer = await chatCompletion(tenantId, [
+      { role: "system", content: CHAT_RULES },
+      ...turns.slice(0, -1).map((t) => ({ role: t.role, content: t.content.slice(0, 2000) })),
+      { role: "system", content: `Passages for the next question:\n${context}` },
+      { role: "user", content: question },
+    ], { maxTokens: 400 });
     return { answer: answer || "I could not find that in the selected knowledge.", passages };
   } catch {
     return { answer: "", passages: [], error: "Could not answer right now. Try again in a moment." };

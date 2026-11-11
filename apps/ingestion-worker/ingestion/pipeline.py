@@ -11,8 +11,7 @@ import random
 import re
 from datetime import datetime, timezone
 
-import httpx
-from vp_core import embeddings, supa
+from vp_core import embeddings, llm_chat, supa, tenant_keys
 
 from . import parsers, site
 from .chunking import Chunk, chunk_markdown
@@ -173,21 +172,18 @@ async def refresh_websites() -> int:
 
 
 # ------------------------------------------------------------------ quality gate
-async def _questions_from_llm(chunks: list[Chunk]) -> list[str]:
-    """One short caller-style question per chunk, in varied Hindi/English/Hinglish so the test is not trivial."""
-    key = os.environ["OPENAI_API_KEY"]
+async def _questions_from_llm(chunks: list[Chunk], tenant: str) -> list[str]:
+    """One short caller-style question per chunk, in varied Hindi/English/Hinglish so the test is not trivial.
+    Written by the workspace's own OpenAI model when it has a working key (D-124), otherwise by the free model."""
     passages = "\n".join(f"{i + 1}. {c.content[:600]}" for i, c in enumerate(chunks))
     prompt = (
         "For each numbered passage, write ONE short question a phone caller might ask that the passage answers. "
         "Do not copy sentences from the passage. Mix styles: plain English, Hindi in Roman letters (Hinglish), or Devanagari. "
         f'Return JSON: {{"questions": ["...", ...]}} with exactly {len(chunks)} items in order.\n\n{passages}'
     )
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                         json={"model": "gpt-4.1-mini", "temperature": 0.7, "response_format": {"type": "json_object"},
-                               "messages": [{"role": "user", "content": prompt}]})
-        r.raise_for_status()
-    qs = json.loads(r.json()["choices"][0]["message"]["content"]).get("questions", [])
+    text = await llm_chat.chat([{"role": "user", "content": prompt}], model="gpt-4.1-mini", temperature=0.7,
+                               json_mode=True, max_tokens=80 * len(chunks) + 100, key=await tenant_keys.load(tenant))
+    qs = json.loads(text).get("questions", [])
     return [str(q) for q in qs][: len(chunks)]
 
 
@@ -208,7 +204,7 @@ async def quality_gate(tenant: str, source_id: str, chunks: list[Chunk], faq: bo
         qs = [c.section for c in sample]
     else:
         try:
-            qs = await _questions_from_llm(sample)
+            qs = await _questions_from_llm(sample, tenant)
         except Exception:
             log.exception("question generation failed; skipping quality gate for %s", source_id)
             return {"tested": 0, "hit_rate": 1.0, "failed": [], "note": "Quality check was skipped."}

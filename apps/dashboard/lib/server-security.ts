@@ -1,17 +1,29 @@
-import { createCipheriv, createHmac, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 
-// Same layout as packages/core/vp_core/secrets.py: base64(iv[12] + ciphertext + tag[16]), AES-256-GCM.
-export function encryptSecret(plain: string): string {
+function secretKey(): Buffer {
   const raw = process.env.TOOL_SECRET_KEY;
   if (!raw) throw new Error("TOOL_SECRET_KEY is not set");
   const key = Buffer.from(raw, "base64");
   if (key.length !== 32) throw new Error("TOOL_SECRET_KEY must be 32 bytes, base64 encoded");
+  return key;
+}
+
+// Same layout as packages/core/vp_core/secrets.py: base64(iv[12] + ciphertext + tag[16]), AES-256-GCM.
+export function encryptSecret(plain: string): string {
+  const key = secretKey();
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", key, iv);
   const enc = Buffer.concat([c.update(plain, "utf8"), c.final()]);
   return Buffer.concat([iv, enc, c.getAuthTag()]).toString("base64");
+}
+
+export function decryptSecret(token: string): string {
+  const buf = Buffer.from(token, "base64");
+  const d = createDecipheriv("aes-256-gcm", secretKey(), buf.subarray(0, 12));
+  d.setAuthTag(buf.subarray(buf.length - 16));
+  return Buffer.concat([d.update(buf.subarray(12, buf.length - 16)), d.final()]).toString("utf8");
 }
 
 export function sign(secret: string, timestamp: string, body: string): string {

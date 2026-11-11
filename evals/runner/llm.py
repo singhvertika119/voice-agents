@@ -1,11 +1,14 @@
-"""Small OpenAI helper for the simulated caller, the judge and the scenario writer."""
+"""Model helper for the simulated caller, the judge and the scenario writer.
+
+Runs on the workspace's own OpenAI key when the test job set one (tenant_keys.use, D-124), otherwise on the free
+model. The free model is a weaker judge than gpt-4.1, so test results without a key can be a little less strict.
+"""
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 
-import httpx
+from vp_core import llm_chat
 
 MODEL = os.getenv("EVAL_MODEL", "gpt-4.1-mini")          # simulated caller and scenario writer
 JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "gpt-4.1")    # the reviewer is stricter and steadier with the larger model
@@ -13,19 +16,8 @@ JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "gpt-4.1")    # the reviewer is stri
 
 async def chat(messages: list[dict], *, temperature: float = 0.7, json_mode: bool = False, max_tokens: int = 400,
                model: str | None = None) -> str:
-    key = os.environ["OPENAI_API_KEY"]
-    body = {"model": model or MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
-    async with httpx.AsyncClient(timeout=60) as c:
-        for attempt in range(4):
-            r = await c.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {key}"}, json=body)
-            if r.status_code in (429, 500, 502, 503) and attempt < 3:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
-    raise RuntimeError("unreachable")
+    return await llm_chat.chat(messages, model=model or MODEL, temperature=temperature, json_mode=json_mode,
+                               max_tokens=max_tokens)
 
 
 async def chat_json(messages: list[dict], **kw) -> dict:

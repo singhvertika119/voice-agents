@@ -2,8 +2,8 @@
 
 import { useActionState } from "react";
 import { Check } from "lucide-react";
-import { Button, Card, Field, inputCls } from "@/components/ui";
-import { eraseCaller, saveSettings, type FormState } from "@/app/(app)/settings/actions";
+import { Badge, Button, Card, Field, inputCls } from "@/components/ui";
+import { eraseCaller, recheckOpenAIKey, removeOpenAIKey, saveOpenAIKey, saveSettings, type FormState } from "@/app/(app)/settings/actions";
 
 export type SettingsValues = {
   days: number[]; start: string; end: string; handoff_phone: string; retention_days: number;
@@ -116,6 +116,55 @@ export function EraseForm({ canEdit }: { canEdit: boolean }) {
           <Result state={state} />
         </div>
       </form>
+    </Card>
+  );
+}
+
+export type OpenAIKeyInfo = { last4: string; status: "ok" | "no_credits" | "invalid" | "unchecked"; checked_at: string | null } | null;
+
+const KEY_BADGE = {
+  ok: ["success", "Working"], no_credits: ["warning", "No credits"], invalid: ["danger", "Not accepted"], unchecked: ["neutral", "Not checked yet"],
+} as const;
+
+// The workspace's own OpenAI key (D-124). The saved key is never sent back to the browser, only its last 4 characters.
+export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit: boolean }) {
+  const [state, save, saving] = useActionState<FormState, FormData>(saveOpenAIKey, null);
+  const [checkState, recheck, checking] = useActionState<FormState>(recheckOpenAIKey, null);
+  const [removeState, remove, removing] = useActionState<FormState>(removeOpenAIKey, null);
+  const [tone, label] = info ? KEY_BADGE[info.status] : (["neutral", "None"] as const);
+  return (
+    <Card className="p-5 flex flex-col gap-4">
+      <div>
+        <h2 className="text-base font-semibold">Your OpenAI key</h2>
+        <p className="text-[13px] text-ink-muted">
+          Your agents, call summaries, tests and the knowledge chat use OpenAI on your own account, so you pay OpenAI directly.
+          Without a working key they use a free model instead, which is a little less accurate. Get a key at platform.openai.com.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">Saved key:</span>
+        {info ? <span className="font-mono">sk-...{info.last4}</span> : <span className="text-ink-muted">none</span>}
+        <Badge tone={tone}>{label}</Badge>
+      </div>
+      {info?.status === "no_credits" && (
+        <p className="text-[13px] text-warning-fg">This OpenAI account has run out of credits. Add credits in OpenAI&apos;s billing settings, then press Check again.</p>
+      )}
+      <form action={save} className="flex flex-col gap-4">
+        <Field label={info ? "Replace with a new key" : "OpenAI key"} helper="Starts with sk-. It is stored encrypted and is never shown again.">
+          <input name="openai_key" type="password" autoComplete="off" spellCheck={false} placeholder="sk-..." disabled={!canEdit} className={`${inputCls} font-mono text-sm`} />
+        </Field>
+        <div className="flex flex-wrap items-center gap-4">
+          <Button disabled={saving || !canEdit}>{saving ? "Checking..." : "Save key"}</Button>
+          <Result state={state} />
+        </div>
+      </form>
+      {info && (
+        <div className="flex flex-wrap items-center gap-3">
+          <form action={recheck}><Button variant="secondary" disabled={checking || !canEdit}>{checking ? "Checking..." : "Check again"}</Button></form>
+          <form action={remove}><Button variant="secondary" disabled={removing || !canEdit}>{removing ? "Removing..." : "Remove key"}</Button></form>
+          <Result state={checkState ?? removeState} />
+        </div>
+      )}
     </Card>
   );
 }
