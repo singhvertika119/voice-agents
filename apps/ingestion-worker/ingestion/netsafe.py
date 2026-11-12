@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
-import socket
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import httpx
+from vp_core.netsafe import UnsafeURL, assert_public_url
 
 from .parsers import ParseError
 
@@ -14,17 +13,11 @@ MAX_BYTES = 5_000_000
 
 
 def assert_public(url: str) -> None:
-    p = urlparse(url)
-    if p.scheme not in ("http", "https") or not p.hostname:
-        raise ParseError("Enter a full web address starting with http:// or https://")
+    """The shared check (vp_core.netsafe), raising the ingestion worker's own error type so it reaches the dashboard."""
     try:
-        infos = socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
-    except socket.gaierror as e:
-        raise ParseError("That web address could not be found. Check the spelling.") from e
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-            raise ParseError("That address is not a public website, so it cannot be read.")
+        assert_public_url(url)
+    except UnsafeURL as e:
+        raise ParseError(str(e)) from e
 
 
 async def fetch_public_page(url: str, max_redirects: int = 3, html_only: bool = True) -> tuple[str, str]:
@@ -50,7 +43,3 @@ async def fetch_public_page(url: str, max_redirects: int = 3, html_only: bool = 
                         raise ParseError("That page is too large to import.")
                 return url, body.decode(r.encoding or "utf-8", errors="replace")
     raise ParseError("That address redirects too many times.")
-
-
-async def fetch_public_html(url: str, max_redirects: int = 3) -> str:
-    return (await fetch_public_page(url, max_redirects))[1]

@@ -3,11 +3,12 @@
 import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Check } from "lucide-react";
-import { Badge, Button, Card, Field, inputCls, textareaCls } from "@/components/ui";
+import { Badge, Button, Card, Field, FormResult, inputCls, textareaCls } from "@/components/ui";
 import { VOICES, findPlaceholders, type AgentConfig } from "@/lib/agent-config";
-import { saveDraft, type SaveState } from "@/app/(app)/agents/actions";
+import { saveDraft } from "@/app/(app)/agents/actions";
+import type { ActionState } from "@/lib/action-state";
 
-export type SourceOption = { id: string; name: string; status: string; chunks: number };
+export type SourceOption = { id: string; name: string; status: string };
 export type ToolOption = { id: string; name: string; description: string; enabled: boolean; requires_confirmation: boolean };
 type Tab = "instructions" | "voice" | "knowledge" | "tools";
 const TABS: { id: Tab; label: string }[] = [
@@ -20,7 +21,7 @@ const TABS: { id: Tab; label: string }[] = [
 // One form for all editing tabs, so switching tabs never throws away what you typed.
 export function AgentEditor({ agentId, name, cfg, sources, tools, initialTab }: { agentId: string; name: string; cfg: AgentConfig; sources: SourceOption[]; tools: ToolOption[]; initialTab: Tab }) {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [state, action, pending] = useActionState<SaveState, FormData>(saveDraft.bind(null, agentId), null);
+  const [state, action, pending] = useActionState<ActionState, FormData>(saveDraft.bind(null, agentId), null);
   const [text, setText] = useState({ greeting: cfg.greeting, instructions: cfg.instructions, knowledge: cfg.knowledge });
   const [picked, setPicked] = useState<string[]>(cfg.knowledge_sources ?? []);
   const [pickedTools, setPickedTools] = useState<string[]>(cfg.tool_ids ?? []);
@@ -144,11 +145,7 @@ export function AgentEditor({ agentId, name, cfg, sources, tools, initialTab }: 
 
       <div className="flex flex-wrap items-center gap-4">
         <Button disabled={pending}>{pending ? "Saving..." : "Save draft"}</Button>
-        {state && (
-          <p role={state.ok ? "status" : "alert"} className={`text-[13px] ${state.ok ? "text-success-fg" : "text-danger-fg"} inline-flex items-center gap-1.5`}>
-            {state.ok && <Check size={14} strokeWidth={2.5} aria-hidden />} {state.message}
-          </p>
-        )}
+        <FormResult state={state} />
       </div>
     </form>
   );

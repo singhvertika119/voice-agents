@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [dependency-groups]
-ingestion = ["pymupdf>=1.28.2", "python-docx>=1.2.0", "openpyxl>=3.1.5", "trafilatura>=2.3.1"]   # document reader worker
-bench = ["jiwer", "soundfile", "scipy", "datasets"]                                              # provider benchmarks
+ingestion = ["pymupdf>=1.28.2", "python-docx>=1.2.0", "openpyxl>=3.1.5", "lxml>=6.0"]   # document reader worker
+bench = ["jiwer", "soundfile", "scipy"]                                                   # provider benchmarks, sim_call
 dev = ["pytest"]
 
 [tool.uv]

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
+import { Check } from "lucide-react";
+import type { ActionState } from "@/lib/action-state";
 
 // Primitives built from docs/DESIGN.md section 6. Tokens only.
 
@@ -65,7 +67,17 @@ export function Field({ label, helper, children }: { label: string; helper?: str
   );
 }
 
-export const inputCls = "h-11 px-3 rounded-md border border-line-strong bg-card text-[15px] text-ink w-full";
+// The line under a form after it was sent: green with a tick when it worked, red otherwise.
+export function FormResult({ state }: { state: ActionState }) {
+  if (!state) return null;
+  return (
+    <p role={state.ok ? "status" : "alert"} className={`text-[13px] inline-flex items-start gap-1.5 ${state.ok ? "text-success-fg" : "text-danger-fg"}`}>
+      {state.ok && <Check size={14} strokeWidth={2.5} aria-hidden className="mt-0.5 shrink-0" />} <span>{state.message}</span>
+    </p>
+  );
+}
+
+export const inputCls ="h-11 px-3 rounded-md border border-line-strong bg-card text-[15px] text-ink w-full";
 export const textareaCls = "px-3 py-2.5 rounded-md border border-line-strong bg-card text-[15px] leading-normal text-ink w-full resize-y";
 
 export function EmptyState({ text, action }: { text: string; action?: ReactNode }) {

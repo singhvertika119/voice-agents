@@ -1,21 +1,18 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, Card } from "@/components/ui";
-import { AddKnowledge, AskBox, AutoRefresh } from "@/components/knowledge-ui";
+import { AddKnowledge, AskBox } from "@/components/knowledge-ui";
+import { AutoRefresh } from "@/components/client-ui";
+import { KNOWLEDGE_BUSY, KNOWLEDGE_STATUS as STATUS } from "@/lib/format";
 import { WizardFooter } from "@/components/wizard";
 import { finishKnowledge } from "../actions";
-
-const STATUS: Record<string, { tone: "neutral" | "success" | "warning" | "danger"; label: string }> = {
-  queued: { tone: "neutral", label: "Waiting" }, parsing: { tone: "neutral", label: "Reading" }, indexing: { tone: "neutral", label: "Indexing" },
-  testing: { tone: "neutral", label: "Checking" }, ready: { tone: "success", label: "Ready" }, needs_review: { tone: "warning", label: "Needs review" }, failed: { tone: "danger", label: "Failed" },
-};
 
 export default async function KnowledgeStep({ searchParams }: { searchParams: Promise<{ agent?: string; error?: string }> }) {
   const { agent, error } = await searchParams;
   if (!agent) redirect("/onboarding/business-type");
   const supabase = await supabaseServer();
   const { data: sources } = await supabase.from("knowledge_sources").select("id,name,status,error").order("created_at", { ascending: false });
-  const busy = sources?.some((s) => ["queued", "parsing", "indexing", "testing"].includes(s.status)) ?? false;
+  const busy = sources?.some((s) => KNOWLEDGE_BUSY.includes(s.status)) ?? false;
   return (
     <div className="flex flex-col gap-7 flex-1">
       <AutoRefresh active={busy} />

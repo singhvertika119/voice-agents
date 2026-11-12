@@ -22,8 +22,8 @@ log = logging.getLogger("providers")
 # first waits for the dead provider to fail before the backup takes over (seen: +5 s on the first turn).
 _down_until: dict[str, float] = {}
 DOWN_SECONDS = 600
-TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-GEMINI_TIMEOUT_MS = 12_000   # Google's minimum is 10 s   # lower = steadier answers; tuned against the grounding tests
+TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))   # lower = steadier answers; tuned against the grounding tests
+GEMINI_TIMEOUT_MS = 12_000   # Google's minimum is 10 s
 
 
 def is_down(provider: str) -> bool:
@@ -122,16 +122,14 @@ def build_stack(cfg: AgentConfig) -> dict:
     lang = cfg.language
     return {
         "stt": _chain(stt.FallbackAdapter, [_stt(cfg.stt["primary"], lang), _stt(cfg.stt["fallback"], lang)], "STT"),
-        # attempt_timeout 4 s (library default 5 s; 2.5 s caused needless failovers under load, see D-050)
-        "llm": _chain(lambda items: llm.FallbackAdapter(items, attempt_timeout=4.0),
-                      [_llm(cfg.llm[k], cfg.llm.get("max_tokens", 200))
-                       for k in ("primary", "fallback", "fallback2") if k in cfg.llm], "LLM"),
+        "llm": build_llm(cfg),
         "tts": _chain(tts.FallbackAdapter, [_tts(cfg.voice["tts_primary"], lang),
                                             _tts(cfg.voice["tts_fallback"], lang)], "TTS"),
     }
 
 
 def build_llm(cfg: AgentConfig):
-    """Just the model chain (with its backups). Used by test conversations, which have no audio."""
+    """The model chain with its backups. Calls get it through build_stack; test conversations (no audio) use it alone.
+    attempt_timeout 4 s (library default 5 s; 2.5 s caused needless failovers under load, see D-050)."""
     return _chain(lambda items: llm.FallbackAdapter(items, attempt_timeout=4.0),
                   [_llm(cfg.llm[k], cfg.llm.get("max_tokens", 200)) for k in ("primary", "fallback", "fallback2") if k in cfg.llm], "LLM")

@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from vp_core.text import spoken_rupees
+
 TARGET_CHARS = 900     # roughly 200-300 tokens: small enough to read aloud, large enough to hold one idea
 MAX_CHARS = 1400
 
@@ -33,7 +35,7 @@ def normalize_for_voice(text: str) -> str:
     t = re.sub(r"[*_`]{1,3}", "", t)
     t = re.sub(r"[→←↗›»«]+", " ", t)                                 # decorative arrows from web buttons
     t = re.sub(r"^\s*[-*•]\s+", "", t, flags=re.M)                 # bullets
-    t = re.sub(r"(?:₹|Rs\.?|INR)\s*([\d,]+)", lambda m: f"{m.group(1).replace(',', '')} rupees", t)
+    t = spoken_rupees(t)
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()

@@ -1,14 +1,7 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
-import { duration, inr, time } from "@/lib/format";
-
-const OUTCOME = {
-  resolved: { tone: "success", label: "Resolved" },
-  handed_off: { tone: "warning", label: "Handed off" },
-  dropped: { tone: "danger", label: "Dropped" },
-  callback: { tone: "neutral", label: "Callback" },
-} as const;
+import { OUTCOME, duration, inr, time } from "@/lib/format";
 
 export default async function CallsPage() {
   const supabase = await supabaseServer();
@@ -37,7 +30,7 @@ export default async function CallsPage() {
               </thead>
               <tbody>
                 {calls.map((c) => {
-                  const o = c.outcome ? OUTCOME[c.outcome as keyof typeof OUTCOME] : null;
+                  const o = c.outcome ? OUTCOME[c.outcome] : null;
                   const agent = c.agents as unknown as { name: string } | null;
                   return (
                     <tr key={c.id}>

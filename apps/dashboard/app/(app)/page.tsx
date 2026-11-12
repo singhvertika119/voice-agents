@@ -3,9 +3,12 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, ButtonLink, Card, CardHeader, EmptyState, MetricTile, PageHeader } from "@/components/ui";
 import { count, inr } from "@/lib/format";
 
+// The start of the 7-day window. This page renders on the server for every request, so "now" is the request time.
+const weekAgo = () => new Date(Date.now() - 7 * 864e5).toISOString();
+
 export default async function Home() {
   const supabase = await supabaseServer();
-  const since = new Date(Date.now() - 7 * 864e5).toISOString();
+  const since = weekAgo();
   const [{ data: calls }, { data: agents }, { count: waitingCallbacks }] = await Promise.all([
     supabase.from("calls").select("outcome,avg_reply_ms,cost_usd").gte("started_at", since),
     supabase.from("agents").select("id,name,published_version"),

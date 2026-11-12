@@ -1,27 +1,15 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
-import { Button, Card, Field, inputCls, textareaCls } from "@/components/ui";
-import { addScenario, type ScenarioState } from "@/app/(app)/agents/test-runs";
-
-export function AutoRefresh({ active }: { active: boolean }) {
-  const router = useRouter();
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 4000);
-    return () => clearInterval(t);
-  }, [active, router]);
-  return null;
-}
+import { useActionState, useRef, useTransition } from "react";
+import { Button, Card, Field, FormResult, inputCls, textareaCls } from "@/components/ui";
+import { useResetOnOk } from "@/components/client-ui";
+import { addScenario } from "@/app/(app)/agents/test-runs";
+import type { ActionState } from "@/lib/action-state";
 
 export function AddScenarioForm({ agentId }: { agentId: string }) {
-  const [state, action, pending] = useActionState<ScenarioState, FormData>(addScenario.bind(null, agentId), null);
+  const [state, action, pending] = useActionState<ActionState, FormData>(addScenario.bind(null, agentId), null);
   const form = useRef<HTMLFormElement>(null);
-  useEffect(() => {
-    if (state?.ok) form.current?.reset();
-  }, [state]);
+  useResetOnOk(state, form);
   return (
     <Card className="p-5 flex flex-col gap-4">
       <div>
@@ -35,11 +23,7 @@ export function AddScenarioForm({ agentId }: { agentId: string }) {
         <Field label="Name (optional)"><input name="name" className={inputCls} /></Field>
         <div className="flex flex-wrap items-center gap-4">
           <Button disabled={pending}>{pending ? "Adding..." : "Add test"}</Button>
-          {state && (
-            <p role={state.ok ? "status" : "alert"} className={`text-[13px] inline-flex items-center gap-1.5 ${state.ok ? "text-success-fg" : "text-danger-fg"}`}>
-              {state.ok && <Check size={14} strokeWidth={2.5} aria-hidden />} {state.message}
-            </p>
-          )}
+          <FormResult state={state} />
         </div>
       </form>
     </Card>
@@ -49,13 +33,4 @@ export function AddScenarioForm({ agentId }: { agentId: string }) {
 export function RunButton({ label, run }: { label: string; run: () => Promise<void> }) {
   const [pending, start] = useTransition();
   return <Button disabled={pending} onClick={() => start(() => run())}>{pending ? "Starting..." : label}</Button>;
-}
-
-export function SmallButton({ label, run, confirmText }: { label: string; run: () => Promise<void>; confirmText?: string }) {
-  const [pending, start] = useTransition();
-  return (
-    <Button variant="secondary" className="h-9" disabled={pending} onClick={() => { if (!confirmText || confirm(confirmText)) start(() => run()); }}>
-      {label}
-    </Button>
-  );
 }

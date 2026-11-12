@@ -23,6 +23,7 @@ load_dotenv(ROOT / ".env", override=True)
 from agent_worker import db, workspace  # noqa: E402
 from agent_worker.config import from_dict  # noqa: E402
 from agent_worker.knowledge import load_knowledge  # noqa: E402
+from agent_worker.tools import IST  # noqa: E402
 from vp_core import heartbeat, supa, tenant_keys  # noqa: E402
 
 from evals.runner import scenarios as sc  # noqa: E402
@@ -31,8 +32,8 @@ from evals.runner.suite import run_suite  # noqa: E402
 log = logging.getLogger("evals")
 MAX_REPLY_MS = 3000
 # Conversations run at the same time. Each one holds an agent session in memory; three together peaked at about
-# 506 MB on a 3-minute run, which is over the 512 MB free Render instance (docs/decision.md D-094). Render sets RENDER.
-CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "1" if os.getenv("RENDER") else "3"))
+# 506 MB on a 3-minute run (docs/decision.md D-094), which fits the 2 GB Render Standard instance (D-108).
+CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "3"))
 STALLED = ("This run stopped making progress (the test runner was restarted or ran out of memory while running it). "
            "Run the tests again.")
 STALE_MIN = 10        # no saved progress for this long means nobody is working on a "running" run (D-105)
@@ -43,17 +44,15 @@ NIGHTLY = os.getenv("NIGHTLY_TESTS", "weekly")       # on (every night) | weekly
 NIGHTLY_RUNS = int(os.getenv("NIGHTLY_RUNS", "1"))    # attempts per scenario; 1 keeps the nightly cost low
 NIGHTLY_HOUR_IST = 2
 NIGHTLY_ACTIVE_DAYS = 7
-IST = timezone(timedelta(hours=5, minutes=30))
 
 
 async def claim() -> dict | None:
     rows = await supa.select("eval_runs", select="*", status="eq.queued", order="created_at.asc", limit="1")
     if not rows:
         return None
-    async with supa.client() as c:   # atomic: only one worker flips queued -> running
-        r = await c.patch("/rest/v1/eval_runs", params={"id": f"eq.{rows[0]['id']}", "status": "eq.queued"}, json={"status": "running"})
-        r.raise_for_status()
-        return r.json()[0] if r.json() else None
+    # Atomic: only one worker flips queued -> running (the update matches only while the status is still queued).
+    claimed = await supa.update("eval_runs", {"id": rows[0]["id"], "status": "queued"}, {"status": "running"})
+    return claimed[0] if claimed else None
 
 
 async def report_progress(run_id: str, stage: str, done: int = 0, total: int = 0, passed: int = 0, scheduled: bool = False) -> None:
@@ -79,15 +78,12 @@ async def knowledge_questions(tenant: str, agent_id: str, ktext: str) -> list[di
     if rows and all((r["spec"] or {}).get("knowledge_key") == key for r in rows):
         return [r["spec"] for r in rows if r["enabled"]]
     items = await sc.write_knowledge_questions(ktext)
-    async with supa.client() as c:
-        if rows:   # the knowledge changed: questions written from the old text may no longer be right
-            r = await c.delete("/rest/v1/eval_scenarios", params={"agent_id": f"eq.{agent_id}", "spec->>source": "eq.generated"})
-            r.raise_for_status()
-        if items:
-            r = await c.post("/rest/v1/eval_scenarios", json=[
-                {"tenant_id": tenant, "agent_id": agent_id, "name": it["question"][:80],
-                 "spec": {**it, "source": "generated", "knowledge_key": key}} for it in items])
-            r.raise_for_status()
+    if rows:   # the knowledge changed: questions written from the old text may no longer be right
+        await supa.delete("eval_scenarios", {"agent_id": agent_id, "spec->>source": "generated"})
+    if items:
+        await supa.insert("eval_scenarios", [
+            {"tenant_id": tenant, "agent_id": agent_id, "name": it["question"][:80],
+             "spec": {**it, "source": "generated", "knowledge_key": key}} for it in items])
     log.info("wrote %d knowledge questions for agent %s", len(items), agent_id)
     return items
 
@@ -181,9 +177,8 @@ async def close_stalled() -> None:
             continue
         last = ((r.get("results") or {}).get("progress") or {}).get("updated_at") or r["created_at"]
         if _minutes_since(last) >= STALE_MIN:
-            async with supa.client() as c:
-                await c.patch("/rest/v1/eval_runs", params={"id": f"eq.{r['id']}", "status": "eq.running"},
-                              json={"status": "failed", "error": STALLED, "finished_at": datetime.now(timezone.utc).isoformat()})
+            await supa.update("eval_runs", {"id": r["id"], "status": "running"},
+                              {"status": "failed", "error": STALLED, "finished_at": datetime.now(timezone.utc).isoformat()})
             log.warning("closed stalled run %s", r["id"])
 
 

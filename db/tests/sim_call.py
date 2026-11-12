@@ -39,5 +39,5 @@ async def main():
     for c in clips:
         print("speaking",os.path.basename(c)); await say(clip(c)); await silence(14)   # wait for the answer
     await silence(3)
-    t=time.time(); await room.disconnect(); print("hung up at",time.strftime("%H:%M:%S"),"room",room_name)
+    await room.disconnect(); print("hung up at",time.strftime("%H:%M:%S"),"room",room_name)
 asyncio.run(main())

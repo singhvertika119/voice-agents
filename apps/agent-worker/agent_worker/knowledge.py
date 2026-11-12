@@ -39,16 +39,19 @@ dhanyavaad dhanyawad please sorry wait ruko main mein mai bas namaste got it und
 
 _NOT_ACK = set("hello hi hey helo bye goodbye alvida namaste हेलो हलो बाय नमस्ते".split())
 
+# A word: letters and digits, including Devanagari ones, but not the "।" / "॥" stops, so "500।" is the word "500".
+_WORD = re.compile(r"[\wऀ-ॣ०-ॿ]+")
+
 
 def is_acknowledgement(text: str) -> bool:
     """Small talk that only acknowledges ("okay", "haan", "nice", "ठीक है"), not a greeting or a goodbye."""
-    words = re.findall(r"[\wऀ-ॣ०-ॿ]+", text.lower())
+    words = _WORD.findall(text.lower())
     return is_small_talk(text) and not any(w in _NOT_ACK for w in words)
 
 
 def is_small_talk(text: str) -> bool:
     """A short acknowledgement or greeting, such as "okay", "haan ji", "thank you", "ठीक है"."""
-    words = re.findall(r"[\wऀ-ॣ०-ॿ]+", text.lower())   # Devanagari letters, not the "।" stop
+    words = _WORD.findall(text.lower())
     return 0 < len(words) <= 4 and all(w in _SMALL_TALK for w in words)
 
 
@@ -154,7 +157,7 @@ class KnowledgeBase:
 
 def keyword_terms(query: str) -> list[str]:
     """Words worth matching, joined with OR: a spoken question rarely contains every word of the passage it needs."""
-    words = re.findall(r"[0-9A-Za-z\u0900-\u097F]{3,}", query.lower())
+    words = re.findall(r"[0-9a-z\u0900-\u0963\u0966-\u097F]{3,}", query.lower())   # Latin and Devanagari, no "\u0964" stops
     return list(dict.fromkeys(words))[:12]
 
 
@@ -253,7 +256,7 @@ async def load_knowledge(source_ids: list[str], tenant_id: str, mode: str = "aut
 
 # ------------------------------------------------------------------ exact lookup over spreadsheets
 def _words(s: str) -> set[str]:
-    return set(re.findall(r"[\wऀ-ॿ]+", str(s).lower()))
+    return set(_WORD.findall(str(s).lower()))
 
 
 def search_rows(tables: list[dict], table: str, search: str, limit: int = 3) -> list[dict]:

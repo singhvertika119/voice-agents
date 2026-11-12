@@ -62,8 +62,8 @@ async def purge_loop() -> None:
             n = await purge_recordings()
             if n:
                 log.info("retention purge removed %d recordings", n)
-        except Exception as e:  # the function arrives with migration 0005; until then there is nothing to do
-            log.info("retention purge skipped: %s", str(e)[:80])
+        except Exception as e:  # noqa: BLE001  try again next hour
+            log.warning("retention purge failed: %s", str(e)[:200])
         await asyncio.sleep(3600)
 
 

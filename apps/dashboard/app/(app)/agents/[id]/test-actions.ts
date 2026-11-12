@@ -2,6 +2,7 @@
 
 import { randomBytes } from "node:crypto";
 import { AccessToken, RoomAgentDispatch, RoomConfiguration } from "livekit-server-sdk";
+import { indianMobile } from "@/lib/phone";
 import { supabaseServer } from "@/lib/supabase/server";
 
 // Issues a short-lived browser token for a test room. The room name carries the agent id and mode;
@@ -22,8 +23,8 @@ export async function startTest(agentId: string, mode: "draft" | "live", callerN
 
   const room = `${mode}-${agentId}-${randomBytes(3).toString("hex")}`;
   // Optional "pretend to call from" number: lets you test caller memory and callbacks without a phone line.
-  const digits = callerNumber.replace(/\D/g, "").replace(/^91(?=\d{10}$)/, "");
-  const attributes: Record<string, string> = /^[6-9]\d{9}$/.test(digits) ? { caller_number: `+91${digits}` } : {};
+  const caller = indianMobile(callerNumber);
+  const attributes: Record<string, string> = caller ? { caller_number: caller } : {};
   const at = new AccessToken(key, secret, { identity: `tester-${user.user.id.slice(0, 8)}`, ttl: "10m", attributes });
   at.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true });
   // Ask for OUR worker by name, so no other app's agent on the same LiveKit project answers (D-060).

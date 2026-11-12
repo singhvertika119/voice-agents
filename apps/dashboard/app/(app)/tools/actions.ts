@@ -1,12 +1,11 @@
 "use server";
 
-import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
-import { supabaseServer } from "@/lib/supabase/server";
+import { dbMessage, done, fail, type ActionState } from "@/lib/action-state";
+import { canEdit, currentMember } from "@/lib/membership";
 import { assertPublicHttps, decryptSecret, encryptSecret, sign } from "@/lib/server-security";
-
-export type ToolState = { ok: boolean; message: string; at: number } | null;
-const fail = (message: string): ToolState => ({ ok: false, message, at: Date.now() });
+import { adminClient } from "@/lib/supabase/admin";
+import { supabaseServer } from "@/lib/supabase/server";
 
 const TYPES = ["string", "number", "boolean"];
 
@@ -24,10 +23,9 @@ function parseParams(text: string): { schema: Record<string, unknown>; error?: s
   return { schema: { type: "object", properties, required } };
 }
 
-export async function addTool(_prev: ToolState, formData: FormData): Promise<ToolState> {
-  const supabase = await supabaseServer();
-  const { data: m } = await supabase.from("tenant_members").select("tenant_id,role").limit(1).single();
-  if (!m || !["owner", "admin", "editor"].includes(m.role)) return fail("You do not have permission to add tools.");
+export async function addTool(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const { supabase, tenantId, role } = await currentMember();
+  if (!tenantId || !canEdit(role)) return fail("You do not have permission to add tools.");
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const endpoint = String(formData.get("endpoint") ?? "").trim();
@@ -44,7 +42,7 @@ export async function addTool(_prev: ToolState, formData: FormData): Promise<Too
   const { data: tool, error: insErr } = await supabase
     .from("tools")
     .insert({
-      tenant_id: m.tenant_id, name, description, endpoint, parameters: schema,
+      tenant_id: tenantId, name, description, endpoint, parameters: schema,
       method: formData.get("method") === "GET" ? "GET" : "POST",
       auth_header: secret ? authHeader || "Authorization" : null,
       timeout_ms: Math.min(5000, Math.max(500, Number(formData.get("timeout_ms")) || 4000)),
@@ -54,19 +52,18 @@ export async function addTool(_prev: ToolState, formData: FormData): Promise<Too
     })
     .select("id")
     .single();
-  if (insErr || !tool) return fail(insErr?.message.includes("duplicate") ? "You already have a tool with that name." : "Could not add the tool. " + (insErr?.message ?? ""));
+  if (insErr || !tool) return fail(insErr?.code === "23505" ? "You already have a tool with that name." : "Could not add the tool. " + dbMessage(insErr));
 
   if (secret) {
     // The credential is encrypted here and can be decrypted only by the call worker. The browser never gets it back.
-    const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    const { error: sErr } = await admin.from("tool_secrets").insert({ tool_id: tool.id, tenant_id: m.tenant_id, secret_enc: encryptSecret(secret) });
+    const { error: sErr } = await adminClient().from("tool_secrets").insert({ tool_id: tool.id, tenant_id: tenantId, secret_enc: encryptSecret(secret) });
     if (sErr) {
       await supabase.from("tools").delete().eq("id", tool.id);
       return fail("Could not store the credential safely, so the tool was not added.");
     }
   }
   revalidatePath("/tools");
-  return { ok: true, message: "Tool added. Open an agent, go to Tools and tick it to let that agent use it.", at: Date.now() };
+  return done("Tool added. Open an agent, go to Tools and tick it to let that agent use it.");
 }
 
 export async function setToolEnabled(id: string, enabled: boolean) {
@@ -82,7 +79,7 @@ export async function deleteTool(id: string) {
 }
 
 // "Test": send a sample request exactly the way a call would (same safety checks and signature) and show what came back.
-export async function testTool(id: string, _prev: ToolState, formData: FormData): Promise<ToolState> {
+export async function testTool(id: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
   const supabase = await supabaseServer();
   const { data: t } = await supabase.from("tools").select("*").eq("id", id).single();
   if (!t) return fail("Tool not found.");
@@ -99,9 +96,14 @@ export async function testTool(id: string, _prev: ToolState, formData: FormData)
   }
   let secret: string | null = null;
   if (t.auth_header) {
-    const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    const { data: s } = await admin.from("tool_secrets").select("secret_enc").eq("tool_id", id).single();
-    if (s) secret = decryptSecret(s.secret_enc);
+    const { data: s } = await adminClient().from("tool_secrets").select("secret_enc").eq("tool_id", id).single();
+    if (s) {
+      try {
+        secret = decryptSecret(s.secret_enc);
+      } catch {
+        return fail("The saved credential could not be read (the server's encryption key changed). Delete the tool and add it again.");
+      }
+    }
   }
   const body = JSON.stringify(args);
   const ts = String(Math.floor(Date.now() / 1000));
@@ -117,7 +119,7 @@ export async function testTool(id: string, _prev: ToolState, formData: FormData)
     const res = await fetch(url, { method: t.method, headers, body: t.method === "GET" ? undefined : body, redirect: "manual", signal: AbortSignal.timeout(t.timeout_ms) });
     const text = (await res.text()).slice(0, 300);
     const ms = Date.now() - started;
-    return { ok: res.ok, at: Date.now(), message: `${res.ok ? "Worked" : "The system answered with an error"} (${res.status}, ${ms} ms). ${text ? "It said: " + text : ""}` };
+    return { ok: res.ok, message: `${res.ok ? "Worked" : "The system answered with an error"} (${res.status}, ${ms} ms). ${text ? "It said: " + text : ""}` };
   } catch (e) {
     const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
     return fail(timedOut ? `No answer within ${t.timeout_ms / 1000} seconds. A caller would hear an apology and a callback offer.` : "Could not reach the system. Check the address.");

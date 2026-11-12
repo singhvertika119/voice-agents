@@ -1,20 +1,11 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
-import { AddKnowledge, AskBox, AutoRefresh, SourceActions } from "@/components/knowledge-ui";
-import { time } from "@/lib/format";
+import { AddKnowledge, AskBox, SourceActions } from "@/components/knowledge-ui";
+import { AutoRefresh } from "@/components/client-ui";
+import { KNOWLEDGE_BUSY, KNOWLEDGE_STATUS as STATUS, time } from "@/lib/format";
 import { deleteSource, retrySource } from "./actions";
 
-const STATUS = {
-  queued: { tone: "neutral", label: "Waiting" },
-  parsing: { tone: "neutral", label: "Reading" },
-  indexing: { tone: "neutral", label: "Indexing" },
-  testing: { tone: "neutral", label: "Checking" },
-  ready: { tone: "success", label: "Ready" },
-  needs_review: { tone: "warning", label: "Needs review" },
-  failed: { tone: "danger", label: "Failed" },
-} as const;
-
-type Stats = { pages?: number; checked_at?: string; refreshed_at?: string; check_error?: string | null; chunks?: number; tokens?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
+type Stats = { pages?: number; checked_at?: string; refreshed_at?: string; check_error?: string | null; chunks?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
 
 export default async function KnowledgePage() {
   const supabase = await supabaseServer();
@@ -22,13 +13,13 @@ export default async function KnowledgePage() {
     .from("knowledge_sources")
     .select("id,name,source_type,file_kind,url,status,error,parsed_md,stats,created_at")
     .order("created_at", { ascending: false });
-  const busy = sources?.some((s) => ["queued", "parsing", "indexing", "testing"].includes(s.status)) ?? false;
+  const busy = sources?.some((s) => KNOWLEDGE_BUSY.includes(s.status)) ?? false;
 
   return (
     <>
       <PageHeader title="Knowledge" intro="What your agents know. Add it once, then choose which agents use it." />
       <AutoRefresh active={busy} />
-      {error && <p role="alert" className="text-[13px] text-danger-fg">Knowledge is not available yet: the database update for it has not been applied.</p>}
+      {error && <p role="alert" className="text-[13px] text-danger-fg">Your knowledge could not be loaded. Refresh the page.</p>}
 
       <div className="flex flex-wrap gap-6 items-start">
         <div className="flex-[999_1_480px] min-w-0 flex flex-col gap-6">
@@ -40,7 +31,7 @@ export default async function KnowledgePage() {
               <CardHeader title="Your knowledge" caption={`${sources.length} item${sources.length === 1 ? "" : "s"}`} />
               <ul>
                 {sources.map((s) => {
-                  const st = STATUS[s.status as keyof typeof STATUS] ?? STATUS.queued;
+                  const st = STATUS[s.status] ?? STATUS.queued;
                   const stats = (s.stats ?? {}) as Stats;
                   return (
                     <li key={s.id} className="px-5 py-4 border-b border-line-subtle last:border-b-0 flex flex-col gap-3">

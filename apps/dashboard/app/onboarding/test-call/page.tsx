@@ -3,8 +3,9 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { Card } from "@/components/ui";
 import { TestPanel } from "@/components/test-panel";
 import { WizardFooter } from "@/components/wizard";
-import { BUSINESS_TYPES } from "@/lib/templates";
-import { findPlaceholders, type AgentConfig } from "@/lib/agent-config";
+import { businessType } from "@/lib/templates";
+import { findPlaceholders } from "@/lib/agent-config";
+import { latestVersion } from "@/lib/versions";
 import { goLive } from "../actions";
 
 export default async function TestCallStep({ searchParams }: { searchParams: Promise<{ agent?: string; error?: string }> }) {
@@ -12,10 +13,10 @@ export default async function TestCallStep({ searchParams }: { searchParams: Pro
   if (!agent) redirect("/onboarding/business-type");
   const supabase = await supabaseServer();
   const { data: a } = await supabase.from("agents").select("id,name,published_version").eq("id", agent).single();
-  const { data: v } = await supabase.from("agent_versions").select("config,status").eq("agent_id", agent).order("version", { ascending: false }).limit(1).single();
+  const v = await latestVersion(supabase, agent);
   if (!a || !v) redirect("/onboarding/business-type");
-  const cfg = v.config as AgentConfig;
-  const type = BUSINESS_TYPES.find((t) => t.id === cfg.wizard?.type) ?? BUSINESS_TYPES[BUSINESS_TYPES.length - 1];
+  const cfg = v.config;
+  const type = businessType(cfg.wizard?.type);
   return (
     <div className="flex flex-col gap-7 flex-1">
       <div>

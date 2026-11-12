@@ -1,14 +1,15 @@
 """Scoring: fixed checks (exact, cheap, repeatable) plus a written-rubric judge for tone, language and grounding."""
 from __future__ import annotations
 
+import re
+
+from agent_worker.language import style
+
 from . import llm
 
 
 def agent_text(convo: dict) -> list[str]:
     return [t["text"] for t in convo["transcript"] if t["speaker"] == "agent" and not t.get("greeting") and t["text"]]
-
-
-from agent_worker.language import style  # noqa: E402
 
 
 def language_follows(convo: dict) -> bool:
@@ -53,7 +54,6 @@ def fixed_checks(convo: dict, checks: dict) -> dict[str, bool]:
     if checks.get("must_not_say"):
         out["avoids_forbidden_words"] = not any(w.casefold() in blob for w in checks["must_not_say"])
     if checks.get("must_not_match"):   # regular expressions, for example any 10-digit number the agent made up
-        import re
         out["no_forbidden_pattern"] = not any(re.search(rx, blob) for rx in checks["must_not_match"])
     if checks.get("asks_question"):
         out["asks_a_question"] = "?" in " ".join(said)

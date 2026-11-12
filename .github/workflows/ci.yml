@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Install (frozen lock file)
-        run: uv sync --frozen
+        run: uv sync --frozen --no-default-groups --group ingestion --group dev   # the benchmark tools are not needed for tests
       - name: Unit tests
         run: uv run pytest -q
 

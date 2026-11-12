@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -135,14 +134,14 @@ async def entrypoint(ctx: JobContext):
 
     contact_id, memory_block = (None, "")
     if tenant_id and caller_number and mode == "normal" and settings.get("memory_enabled", True):
-        contact_id = await workspace.ensure_contact(tenant_id, caller_number)
+        await workspace.ensure_contact(tenant_id, caller_number)
         contact_id, memory_block = await workspace.load_memory(tenant_id, caller_number, agent_ref, settings)
 
     state = CallState(tenant_id=tenant_id, agent_id=agent_ref, call_id=call_row, caller_number=caller_number, settings=settings)
     kb = await load_knowledge(cfg.knowledge_sources, tenant_id, cfg.knowledge_mode) if tenant_id and mode == "normal" else KnowledgeBase()
     tools = builtin_tools(state, workspace.DbBackend() if tenant_id else RecordingBackend())
     if tenant_id and mode == "normal":
-        tools += await load_custom_tools(tenant_id, list((cfg.__dict__.get("tool_ids")) or []), state)
+        tools += await load_custom_tools(tenant_id, list(cfg.tool_ids or []), state)
     extra_rules = DEGRADED_RULES if mode == "degraded" else ""
     greeting = {"normal": cfg.greeting.strip(), "degraded": MSG_DEGRADED, "full": MSG_FULL, "disabled": MSG_OFF}[mode]
 
@@ -167,18 +166,17 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(vad=ctx.proc.userdata["vad"], turn_detection=_turn_detector(cfg), min_endpointing_delay=0.3, **stack)
     agent = VoiceAgent(cfg, kb, tools=tools, memory_block=memory_block, extra_rules=extra_rules)
     want_recording = bool(tenant_id and mode == "normal" and settings.get("record_calls", True))
-    recorder = CallRecorder(session, REPO_ROOT / "logs" / "recordings", f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}") if want_recording else None
-
-    call_id = f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}"
+    call_id = f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}"   # one name for this call's local files: recording and metrics log
+    recorder = CallRecorder(session, REPO_ROOT / "logs" / "recordings", call_id) if want_recording else None
     mlog = CallMetricsLog(REPO_ROOT / "logs", call_id, cfg.id)
     agent.on_prepared = mlog.on_prepared
-    mlog._write({"event": "mode", "mode": mode, "knowledge_mode": kb.mode, "memory": bool(memory_block), "caller": bool(caller_number)})
+    mlog.note({"event": "mode", "mode": mode, "knowledge_mode": kb.mode, "memory": bool(memory_block), "caller": bool(caller_number)})
     t_start, turns, tasks = time.time(), [], set()
 
     def _watch(kind: str):
         def handler(ev):
             who = type(getattr(ev, kind, None)).__module__.split(".")[-2:] if getattr(ev, kind, None) else "?"
-            mlog._write({"event": "provider_available" if ev.available else "provider_unavailable", "kind": kind, "provider": ".".join(who)})
+            mlog.note({"event": "provider_available" if ev.available else "provider_unavailable", "kind": kind, "provider": ".".join(who)})
             log.warning("%s provider %s is now %s", kind, ".".join(who), "available" if ev.available else "UNAVAILABLE (backup in use)")
         return handler
 
@@ -229,7 +227,7 @@ async def entrypoint(ctx: JobContext):
                                          "replies": mlog.turn_timings(),   # shown on the call page (D-115)
                                          "search_parts": kb.search_parts, "retrieve_log": kb.retrieve_log},   # D-118
                       "language": cfg.language, "outcome": outcome, "tool_calls": state.tool_log, "contact_id": contact_id}
-        await db.finish_call(call_row, tenant_id, essentials, [])
+        await db.finish_call(call_row, essentials)
 
         conversation = [t for t in turns if t["seq"] > 0 or t["speaker"] == "caller"]   # skip the fixed greeting for summaries
 
@@ -278,7 +276,7 @@ async def entrypoint(ctx: JobContext):
             except Exception as e:
                 log.warning("end-of-call step failed: %s", e)
         if extras:
-            await db.finish_call(call_row, tenant_id, extras, [])
+            await db.finish_call(call_row, extras)
 
     async def _warm_llm():
         """The first real LLM request is slow (new connection, empty prompt cache). Send the agent's actual

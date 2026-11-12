@@ -1,16 +1,16 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { VoiceStep, WizardFooter } from "@/components/wizard";
-import type { AgentConfig } from "@/lib/agent-config";
+import { latestVersion } from "@/lib/versions";
 import { saveVoice } from "../actions";
 
 export default async function VoiceStepPage({ searchParams }: { searchParams: Promise<{ agent?: string; error?: string }> }) {
   const { agent, error } = await searchParams;
   if (!agent) redirect("/onboarding/business-type");
   const supabase = await supabaseServer();
-  const { data: v } = await supabase.from("agent_versions").select("config").eq("agent_id", agent).order("version", { ascending: false }).limit(1).single();
+  const v = await latestVersion(supabase, agent);
   if (!v) redirect("/onboarding/business-type");
-  const cfg = v.config as AgentConfig;
+  const cfg = v.config;
   return (
     <form action={saveVoice.bind(null, agent)} className="flex flex-col gap-7 flex-1">
       <div>

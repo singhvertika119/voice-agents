@@ -113,7 +113,7 @@ async def call_endpoint(tool: dict, secret: str | None, args: dict, idem_key: st
             await client.aclose()
 
 
-async def load_custom_tools(tenant_id: str, tool_ids: list[str], state: CallState, say_filler=None) -> list:
+async def load_custom_tools(tenant_id: str, tool_ids: list[str], state: CallState) -> list:
     """Build the agent's custom tools from the database rows pinned in its config."""
     if not tool_ids:
         return []

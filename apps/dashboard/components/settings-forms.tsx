@@ -1,9 +1,10 @@
 "use client";
 
 import { useActionState } from "react";
-import { Check } from "lucide-react";
-import { Badge, Button, Card, Field, inputCls } from "@/components/ui";
-import { eraseCaller, recheckOpenAIKey, removeOpenAIKey, saveKeyUse, saveOpenAIKey, saveSettings, type FormState } from "@/app/(app)/settings/actions";
+import { Badge, Button, Card, Field, FormResult, inputCls } from "@/components/ui";
+import { eraseCaller, recheckOpenAIKey, removeOpenAIKey, saveKeyUse, saveOpenAIKey, saveSettings } from "@/app/(app)/settings/actions";
+import type { ActionState } from "@/lib/action-state";
+import type { KeyStatus, KeyUse } from "@/lib/openai-key";
 
 export type SettingsValues = {
   days: number[]; start: string; end: string; handoff_phone: string; retention_days: number;
@@ -11,17 +12,8 @@ export type SettingsValues = {
 };
 const DAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [7, "Sun"]] as const;
 
-function Result({ state }: { state: FormState }) {
-  if (!state) return null;
-  return (
-    <p role={state.ok ? "status" : "alert"} className={`text-[13px] inline-flex items-center gap-1.5 ${state.ok ? "text-success-fg" : "text-danger-fg"}`}>
-      {state.ok && <Check size={14} strokeWidth={2.5} aria-hidden />} {state.message}
-    </p>
-  );
-}
-
 export function SettingsForm({ v, canEdit }: { v: SettingsValues; canEdit: boolean }) {
-  const [state, action, pending] = useActionState<FormState, FormData>(saveSettings, null);
+  const [state, action, pending] = useActionState<ActionState, FormData>(saveSettings, null);
   return (
     <form action={action} className="flex flex-col gap-6">
       <Card className="p-5 flex flex-col gap-5">
@@ -89,7 +81,7 @@ export function SettingsForm({ v, canEdit }: { v: SettingsValues; canEdit: boole
 
       <div className="flex flex-wrap items-center gap-4">
         <Button disabled={pending || !canEdit}>{pending ? "Saving..." : "Save settings"}</Button>
-        <Result state={state} />
+        <FormResult state={state} />
         {!canEdit && <span className="text-[13px] text-ink-muted">Only owners and admins can change these.</span>}
       </div>
     </form>
@@ -97,7 +89,7 @@ export function SettingsForm({ v, canEdit }: { v: SettingsValues; canEdit: boole
 }
 
 export function EraseForm({ canEdit }: { canEdit: boolean }) {
-  const [state, action, pending] = useActionState<FormState, FormData>(eraseCaller, null);
+  const [state, action, pending] = useActionState<ActionState, FormData>(eraseCaller, null);
   return (
     <Card className="p-5 flex flex-col gap-4">
       <div>
@@ -113,14 +105,14 @@ export function EraseForm({ canEdit }: { canEdit: boolean }) {
         </label>
         <div className="flex flex-wrap items-center gap-4">
           <Button variant="secondary" disabled={pending || !canEdit}>{pending ? "Deleting..." : "Delete their data"}</Button>
-          <Result state={state} />
+          <FormResult state={state} />
         </div>
       </form>
     </Card>
   );
 }
 
-export type OpenAIKeyInfo = { last4: string; status: "ok" | "no_credits" | "invalid" | "unchecked"; checked_at: string | null; use_for: "calls" | "everything" } | null;
+export type OpenAIKeyInfo = { last4: string; status: KeyStatus; checked_at: string | null; use_for: KeyUse } | null;
 
 const KEY_USES = [
   ["calls", "Calls only (cheapest)", "Live calls, and the agent in test conversations, use OpenAI. Summaries, the test reviewer, knowledge checks and the knowledge chat use the free model."],
@@ -133,10 +125,10 @@ const KEY_BADGE = {
 
 // The workspace's own OpenAI key (D-124). The saved key is never sent back to the browser, only its last 4 characters.
 export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit: boolean }) {
-  const [state, save, saving] = useActionState<FormState, FormData>(saveOpenAIKey, null);
-  const [checkState, recheck, checking] = useActionState<FormState>(recheckOpenAIKey, null);
-  const [removeState, remove, removing] = useActionState<FormState>(removeOpenAIKey, null);
-  const [useForState, saveUse, savingUse] = useActionState<FormState, FormData>(saveKeyUse, null);
+  const [state, save, saving] = useActionState<ActionState, FormData>(saveOpenAIKey, null);
+  const [checkState, recheck, checking] = useActionState<ActionState>(recheckOpenAIKey, null);
+  const [removeState, remove, removing] = useActionState<ActionState>(removeOpenAIKey, null);
+  const [useForState, saveUse, savingUse] = useActionState<ActionState, FormData>(saveKeyUse, null);
   const [tone, label] = info ? KEY_BADGE[info.status] : (["neutral", "None"] as const);
   return (
     <Card className="p-5 flex flex-col gap-4">
@@ -161,7 +153,7 @@ export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit:
         </Field>
         <div className="flex flex-wrap items-center gap-4">
           <Button disabled={saving || !canEdit}>{saving ? "Checking..." : "Save key"}</Button>
-          <Result state={state} />
+          <FormResult state={state} />
         </div>
       </form>
       {info && (
@@ -177,7 +169,7 @@ export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit:
           </fieldset>
           <div className="flex flex-wrap items-center gap-4">
             <Button variant="secondary" disabled={savingUse || !canEdit}>{savingUse ? "Saving..." : "Save choice"}</Button>
-            <Result state={useForState} />
+            <FormResult state={useForState} />
           </div>
         </form>
       )}
@@ -185,7 +177,7 @@ export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit:
         <div className="flex flex-wrap items-center gap-3">
           <form action={recheck}><Button variant="secondary" disabled={checking || !canEdit}>{checking ? "Checking..." : "Check again"}</Button></form>
           <form action={remove}><Button variant="secondary" disabled={removing || !canEdit}>{removing ? "Removing..." : "Remove key"}</Button></form>
-          <Result state={checkState ?? removeState} />
+          <FormResult state={checkState ?? removeState} />
         </div>
       )}
     </Card>

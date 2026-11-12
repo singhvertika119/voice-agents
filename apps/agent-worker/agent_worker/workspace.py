@@ -40,7 +40,7 @@ async def agent_enabled(agent_id: str) -> bool:
         rows = await supa.select("agents", select="enabled", id=f"eq.{agent_id}")
         return bool(rows[0]["enabled"]) if rows else True
     except Exception:
-        return True  # column missing or database down: keep answering
+        return True  # database down: keep answering
 
 
 async def active_calls(tenant_id: str, exclude_call: str | None) -> int:

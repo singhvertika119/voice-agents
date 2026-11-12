@@ -2,18 +2,18 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Card, Field, inputCls, textareaCls } from "@/components/ui";
 import { PlayButton, WizardFooter } from "@/components/wizard";
-import { BUSINESS_TYPES, LANGUAGES, buildGreeting } from "@/lib/templates";
-import type { AgentConfig } from "@/lib/agent-config";
+import { LANGUAGES, buildGreeting, businessType } from "@/lib/templates";
+import { latestVersion } from "@/lib/versions";
 import { saveDetails } from "../actions";
 
 export default async function DetailsStep({ searchParams }: { searchParams: Promise<{ agent?: string; error?: string }> }) {
   const { agent, error } = await searchParams;
   if (!agent) redirect("/onboarding/business-type");
   const supabase = await supabaseServer();
-  const { data: v } = await supabase.from("agent_versions").select("config").eq("agent_id", agent).order("version", { ascending: false }).limit(1).single();
+  const v = await latestVersion(supabase, agent);
   if (!v) redirect("/onboarding/business-type");
-  const cfg = v.config as AgentConfig;
-  const type = BUSINESS_TYPES.find((t) => t.id === cfg.wizard?.type) ?? BUSINESS_TYPES[BUSINESS_TYPES.length - 1];
+  const cfg = v.config;
+  const type = businessType(cfg.wizard?.type);
   const d = cfg.wizard?.details;
   const { data: s } = await supabase.from("tenant_settings").select("handoff_phone").maybeSingle();
   const languages = d?.languages ?? ["hinglish"];
@@ -59,7 +59,7 @@ export default async function DetailsStep({ searchParams }: { searchParams: Prom
           <Card className="p-5 flex flex-col gap-3">
             <span className="text-xs font-medium uppercase tracking-[0.04em] text-ink-muted">Callers will hear</span>
             <p className="text-[15px] leading-normal">{greeting}</p>
-            <p className="text-[13px] text-ink-muted">This is a starting point. Callers hear the greeting exactly as written, and you can change it later on the agent's Instructions tab.</p>
+            <p className="text-[13px] text-ink-muted">This is a starting point. Callers hear the greeting exactly as written, and you can change it later on the agent&apos;s Instructions tab.</p>
             <PlayButton voice="ritu" text={greeting} label="Play greeting" />
           </Card>
         </aside>

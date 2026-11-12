@@ -148,13 +148,3 @@ def test_verify_saves_what_openai_says(monkeypatch, env):
     fake_http(monkeypatch, lambda r: httpx.Response(503))
     n = len(env)
     assert asyncio.run(llm_chat.verify(TenantKey(T, "sk-own", "ok"))) is None and len(env) == n   # a passing problem: nothing saved
-
-
-def test_load_works_before_migration_0012(monkeypatch):
-    async def select(table, **params):
-        if "use_for" in params["select"]:
-            raise RuntimeError("column tenant_api_keys.use_for does not exist")
-        return [{"secret_enc": secrets.encrypt("sk-abc"), "status": "ok", "checked_at": None}]
-    monkeypatch.setattr(tenant_keys.supa, "select", select)
-    k = asyncio.run(tenant_keys.load(T))
-    assert k.value == "sk-abc" and k.use_for == "calls" and not k.for_background()

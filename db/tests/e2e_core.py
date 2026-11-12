@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "packages/core"), str(ROOT / "apps/agent-worker"), str(ROOT)]
 load_dotenv(ROOT / ".env", override=True)
 
-from agent_worker import db, postcall, workspace  # noqa: E402
+from agent_worker import postcall, workspace  # noqa: E402
 from agent_worker.custom_tools import load_custom_tools  # noqa: E402
 from agent_worker.tools import CallState  # noqa: E402
 from vp_core import secrets, supa  # noqa: E402
@@ -143,8 +143,10 @@ async def main():
 
         # ---- a database-queued test run, end to end
         rest("PATCH", f"agents?id=eq.{ag['id']}", A, json={"enabled": True})
-        run = rest("POST", "eval_runs", A, json={"tenant_id": tenant, "agent_id": ag["id"], "agent_version": 2, "status": "queued", "runs_per_scenario": 1}).json()[0]
+        # Imported BEFORE queueing: the import takes seconds, and the live test worker on Render polls every 3 s, so a
+        # run queued first was often claimed by Render instead of by this script.
         from evals import worker as ew
+        run = rest("POST", "eval_runs", A, json={"tenant_id": tenant, "agent_id": ag["id"], "agent_version": 2, "status": "queued", "runs_per_scenario": 1}).json()[0]
         job = await ew.claim()
         check("test run is claimed from the queue", job is not None and job["id"] == run["id"])
         if job:

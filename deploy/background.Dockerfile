@@ -1,5 +1,5 @@
-# Document reader + test worker + hourly cleanup, in one small container with a health page (for Render's free plan,
-# which wants a web address). Build context is the repository root.
+# Document reader + test worker + hourly cleanup + question embeddings for the dashboard, in one container with a
+# health page (Render runs it as a web service). Build context is the repository root.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \

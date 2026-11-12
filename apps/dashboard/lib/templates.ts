@@ -58,6 +58,11 @@ export const BUSINESS_TYPES: BusinessType[] = [
   },
 ];
 
+// The template an agent was made from; an unknown or missing id means "start from scratch" (the last one).
+export function businessType(id: string | undefined): BusinessType {
+  return BUSINESS_TYPES.find((t) => t.id === id) ?? BUSINESS_TYPES[BUSINESS_TYPES.length - 1];
+}
+
 export const LANGUAGES = [
   { id: "hindi", label: "Hindi" },
   { id: "english", label: "English" },
@@ -74,7 +79,7 @@ export type Details = {
 
 const BASE_RULES =
   "Reply in one or two short spoken sentences. Never use lists, markdown, symbols or URLs.\n" +
-  "Answer only from the knowledge below. If it is not covered, say you do not have that information and offer to connect a human. " +
+  "Answer only from the knowledge below. If it is not covered, say you do not have that information and offer a callback from the team. " +
   "Never invent prices, timings or names.";
 
 export function languageLine(languages: string[]): string {

@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import random
-import re
 from datetime import datetime, timezone
 
 from vp_core import embeddings, llm_chat, supa, tenant_keys
@@ -36,12 +35,8 @@ async def claim_next() -> dict | None:
     rows = await supa.select("knowledge_sources", select="*", status="eq.queued", order="created_at.asc", limit="1")
     if not rows:
         return None
-    # Atomic claim: only one worker flips queued -> parsing.
-    async with supa.client() as c:
-        r = await c.patch("/rest/v1/knowledge_sources", params={"id": f"eq.{rows[0]['id']}", "status": "eq.queued"},
-                          json={"status": "parsing", "error": None})
-        r.raise_for_status()
-        claimed = r.json()
+    # Atomic claim: only one worker flips queued -> parsing (the update matches only while the status is still queued).
+    claimed = await supa.update("knowledge_sources", {"id": rows[0]["id"], "status": "queued"}, {"status": "parsing", "error": None})
     return claimed[0] if claimed else None
 
 

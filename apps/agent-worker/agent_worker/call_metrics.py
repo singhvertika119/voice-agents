@@ -24,7 +24,6 @@ class CallMetricsLog:
     def __init__(self, log_dir: Path, call_id: str, agent_id: str):
         log_dir.mkdir(parents=True, exist_ok=True)
         self.path = log_dir / f"{call_id}.jsonl"
-        self.agent_id = agent_id
         self.totals = {"stt_sec": 0.0, "tts_chars": 0, "llm_in": 0, "llm_cached": 0, "llm_out": 0}
         self._turns: list[dict] = []   # one entry per caller turn: eou, ttft, ttfb
         self._replies: list[dict] = []  # per reply, from the messages' own timings (on_message)
@@ -36,6 +35,10 @@ class CallMetricsLog:
         rec["ts"] = round(time.time(), 3)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def note(self, rec: dict) -> None:
+        """Add a free-form event to this call's log (mode, provider switches)."""
+        self._write(rec)
 
     def on_metrics(self, m) -> None:
         if isinstance(m, metrics.EOUMetrics):

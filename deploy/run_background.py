@@ -24,10 +24,10 @@ from vp_core import embeddings, heartbeat  # noqa: E402
 log = logging.getLogger("background")
 STARTED = time.time()
 STATE = {"ingestion": "starting", "tests": "starting"}
-# One test conversation holds about 450 MB (measured, docs/decision.md D-094), so the test worker cannot share a
-# 512 MB free instance with the document reader. It is off on Render unless RUN_TEST_WORKER=1 (a bigger instance);
-# test runs queued from the dashboard then wait for `scripts/run-evals.ps1` on a laptop.
-RUN_TESTS = os.getenv("RUN_TEST_WORKER", "0" if os.getenv("RENDER") else "1") == "1"
+# One test conversation holds about 450 MB (measured, docs/decision.md D-094); the 2 GB Standard instance runs the test
+# worker next to the document reader (render.yaml sets RUN_TEST_WORKER=1). Set it to 0 to leave test runs to
+# `scripts/run-evals.ps1` on a laptop.
+RUN_TESTS = os.getenv("RUN_TEST_WORKER", "1") == "1"
 
 
 async def supervise(name: str, fn):

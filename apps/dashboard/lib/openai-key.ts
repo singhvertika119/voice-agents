@@ -1,22 +1,18 @@
 // Each workspace's own OpenAI key (bring your own key, docs/decision.md D-124). Server code only: the key is read
 // with the service key and decrypted here, and is never sent to the browser. The knowledge chat uses it only when
 // the owner chose "everything" (D-125); otherwise, or without a working key, it uses the free Groq model.
-import { createClient } from "@supabase/supabase-js";
 import { decryptSecret } from "@/lib/server-security";
+import { adminClient } from "@/lib/supabase/admin";
 
 export type KeyStatus = "ok" | "no_credits" | "invalid" | "unchecked";
 export type KeyUse = "calls" | "everything";
 export type KeyCheck = KeyStatus | "unreachable";
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const FREE_MODEL = process.env.FREE_LLM_MODEL || "openai/gpt-oss-120b";
 const RETRY_AFTER_MS = 60 * 60 * 1000;   // a key marked "no credits" is tried again after an hour (same as the worker)
-
-export function adminClient() {
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-}
 
 // What OpenAI says about a key. One tiny request (a 1-word reply, a tiny fraction of a cent on the key's own
 // account), because only a real request shows whether the account has credits.
@@ -36,7 +32,7 @@ export async function checkOpenAIKey(key: string): Promise<KeyCheck> {
   }
 }
 
-// Same rules as packages/core/vp_core/tenant_keys.py classify().
+// Same rules as packages/core/vp_core/tenant_keys.py classify(); keep the two in step.
 function verdict(status: number, body: string): KeyStatus | null {
   if (status === 401) return "invalid";
   if (status === 429 && /insufficient_quota|credit_balance|billing/.test(body)) return "no_credits";
@@ -46,12 +42,11 @@ function verdict(status: number, body: string): KeyStatus | null {
 type StoredKey = { tenantId: string; key: string; status: KeyStatus; checkedAt: string | null; useFor: KeyUse };
 
 async function loadKey(tenantId: string): Promise<StoredKey | null> {
-  // use_for arrived in 0012; a database without it is treated as "calls".
-  const { data, error } = await adminClient().from("tenant_api_keys").select("*")
+  const { data, error } = await adminClient().from("tenant_api_keys").select("secret_enc,status,checked_at,use_for")
     .eq("tenant_id", tenantId).eq("provider", "openai").maybeSingle();
   if (error || !data) return null;
   try {
-    return { tenantId, key: decryptSecret(data.secret_enc), status: data.status as KeyStatus, checkedAt: data.checked_at, useFor: (data.use_for as KeyUse) ?? "calls" };
+    return { tenantId, key: decryptSecret(data.secret_enc), status: data.status as KeyStatus, checkedAt: data.checked_at, useFor: data.use_for as KeyUse };
   } catch {
     return null;
   }

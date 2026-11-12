@@ -1,13 +1,15 @@
-"""Thin Supabase (PostgREST) client for the worker. Uses the service-role key, so it bypasses row-level
-security: every call here must set tenant_id explicitly. DB mode is opt-in: it turns on only when AGENT_ID
-is a UUID, so YAML agents and the benchmark never touch a database (docs/decision.md D-014)."""
+"""The worker's reads and writes for agents, versions, calls and turns, through the shared Supabase client (vp_core.supa).
+That client uses the service-role key, so it bypasses row-level security: every call here must set tenant_id explicitly.
+DB mode is opt-in: it turns on only when AGENT_ID is a UUID or the room names an agent, so YAML agents and the benchmark
+never touch a database (docs/decision.md D-014).
+
+Writes on the call path never raise: a database problem must not stop a call (architecture: call path survives DB outage)."""
 from __future__ import annotations
 
 import logging
-import os
 import re
 
-import httpx
+from vp_core import supa
 
 log = logging.getLogger("db")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -15,12 +17,6 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 def is_agent_uuid(value: str | None) -> bool:
     return bool(value and _UUID.match(value))
-
-
-def _client() -> httpx.AsyncClient:
-    url, key = os.environ["SUPABASE_URL"].rstrip("/"), os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    return httpx.AsyncClient(base_url=f"{url}/rest/v1", timeout=10,
-                             headers={"apikey": key, "Authorization": f"Bearer {key}", "Prefer": "return=representation"})
 
 
 def parse_room(room: str) -> tuple[str, str] | None:
@@ -33,68 +29,59 @@ def parse_room(room: str) -> tuple[str, str] | None:
     return (m.group(1).lower(), m.group(2)) if m else None
 
 
+async def _agent(agent_id: str) -> dict:
+    rows = await supa.select("agents", id=f"eq.{agent_id}", select="id,name,tenant_id,published_version")
+    if not rows:
+        raise RuntimeError(f"Agent {agent_id} not found")
+    return rows[0]
+
+
+async def _version(agent: dict, version: int | None) -> dict:
+    """One version's config; version=None means the newest (draft or not)."""
+    params = {"agent_id": f"eq.{agent['id']}", "select": "version,config"}
+    params.update({"version": f"eq.{version}"} if version is not None else {"order": "version.desc", "limit": "1"})
+    rows = await supa.select("agent_versions", **params)
+    if not rows:
+        raise RuntimeError(f"Version {version} not found" if version is not None else f"Agent {agent['id']} has no versions")
+    return {"agent": agent, "version": rows[0]["version"], "config": rows[0]["config"]}
+
+
 async def fetch_latest(agent_id: str) -> dict:
-    """Latest version (draft or not): what the 'Test the draft' panel talks to."""
-    async with _client() as c:
-        r = await c.get("/agents", params={"id": f"eq.{agent_id}", "select": "id,name,tenant_id,published_version"})
-        r.raise_for_status()
-        if not r.json():
-            raise RuntimeError(f"Agent {agent_id} not found")
-        agent = r.json()[0]
-        r = await c.get("/agent_versions", params={"agent_id": f"eq.{agent_id}", "select": "version,config",
-                                                   "order": "version.desc", "limit": "1"})
-        r.raise_for_status()
-        v = r.json()[0]
-        return {"agent": agent, "version": v["version"], "config": v["config"]}
+    """Latest version (draft or not): what the 'Test the draft' panel talks to. Returns {agent, version, config}."""
+    return await _version(await _agent(agent_id), None)
 
 
 async def fetch_published(agent_id: str) -> dict:
-    """Returns {agent: {...}, version: int, config: {...}} for the agent's published version."""
-    async with _client() as c:
-        r = await c.get("/agents", params={"id": f"eq.{agent_id}", "select": "id,name,tenant_id,published_version"})
-        r.raise_for_status()
-        rows = r.json()
-        if not rows or not rows[0]["published_version"]:
-            raise RuntimeError(f"Agent {agent_id} has no published version. Publish one in the dashboard.")
-        agent = rows[0]
-        r = await c.get("/agent_versions", params={"agent_id": f"eq.{agent_id}",
-                                                   "version": f"eq.{agent['published_version']}", "select": "config"})
-        r.raise_for_status()
-        return {"agent": agent, "version": agent["published_version"], "config": r.json()[0]["config"]}
+    """The agent's published version. Returns {agent, version, config}."""
+    agent = await _agent(agent_id)
+    if not agent["published_version"]:
+        raise RuntimeError(f"Agent {agent_id} has no published version. Publish one in the dashboard.")
+    return await _version(agent, agent["published_version"])
+
+
+async def fetch_version(agent_id: str, version: int) -> dict:
+    """A specific version (used by test runs, which check the exact version a person is about to publish)."""
+    return await _version(await _agent(agent_id), version)
 
 
 async def start_call(tenant_id: str, agent_id: str, version: int, room: str, caller_number: str | None = None,
                      consent: dict | None = None) -> str | None:
-    base = {"tenant_id": tenant_id, "agent_id": agent_id, "agent_version": version, "livekit_room": room}
-    full = {**base, "caller_number": caller_number, "consent": consent, "channel": "phone" if caller_number else "web"}
-    for row in (full, base):   # the second form works on a database that has not had the newest update applied yet
-        try:
-            async with _client() as c:
-                r = await c.post("/calls", json=row)
-                r.raise_for_status()
-                return r.json()[0]["id"]
-        except Exception as e:  # a database problem must never stop a call (architecture: call path survives DB outage)
-            log.warning("could not record call start (%s)", e)
-    return None
+    row = {"tenant_id": tenant_id, "agent_id": agent_id, "agent_version": version, "livekit_room": room,
+           "caller_number": caller_number, "consent": consent, "channel": "phone" if caller_number else "web"}
+    try:
+        return (await supa.insert("calls", row))[0]["id"]
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not record call start (%s)", e)
+        return None
 
 
-_OLD_COLUMNS = ("ended_at", "duration_s", "avg_reply_ms", "cost_usd", "cost_breakdown", "language", "outcome", "summary")
-_RECORDING_COLUMNS = _OLD_COLUMNS + ("structured", "consent", "contact_id", "tool_calls")   # without the 0006 columns
-
-
-async def finish_call(call_id: str | None, tenant_id: str, fields: dict, turns: list[dict]) -> None:
+async def finish_call(call_id: str | None, fields: dict) -> None:
     if not call_id:
         return
-    for payload in (fields, {k: v for k, v in fields.items() if k in _RECORDING_COLUMNS}, {k: v for k, v in fields.items() if k in _OLD_COLUMNS}):
-        try:
-            async with _client() as c:
-                (await c.patch("/calls", params={"id": f"eq.{call_id}"}, json=payload)).raise_for_status()
-                if turns:
-                    rows = [{**t, "call_id": call_id, "tenant_id": tenant_id} for t in turns]
-                    (await c.post("/call_turns", json=rows)).raise_for_status()
-            return
-        except Exception as e:
-            log.warning("could not save call %s (%s)", call_id, e)
+    try:
+        await supa.update("calls", {"id": call_id}, fields)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not save call %s (%s)", call_id, e)
 
 
 async def add_turn(call_id: str | None, tenant_id: str, turn: dict) -> None:
@@ -102,35 +89,16 @@ async def add_turn(call_id: str | None, tenant_id: str, turn: dict) -> None:
     if not call_id:
         return
     try:
-        async with _client() as c:
-            (await c.post("/call_turns", json={**turn, "call_id": call_id, "tenant_id": tenant_id})).raise_for_status()
-    except Exception as e:
+        await supa.insert("call_turns", {**turn, "call_id": call_id, "tenant_id": tenant_id})
+    except Exception as e:  # noqa: BLE001
         log.warning("could not save turn %s of call %s: %s", turn.get("seq"), call_id, e)
 
 
 async def replace_turn_text(call_id: str | None, seq: int, text: str, live_text: str) -> None:
-    """Swap in the re-transcribed text (D-097). The live text is kept in text_live when migration 0008 is applied."""
+    """Swap in the re-transcribed text (D-097); what was heard live is kept in text_live."""
     if not call_id:
         return
-    for payload in ({"text": text, "text_live": live_text}, {"text": text}):
-        try:
-            async with _client() as c:
-                (await c.patch("/call_turns", params={"call_id": f"eq.{call_id}", "seq": f"eq.{seq}"}, json=payload)).raise_for_status()
-            return
-        except Exception as e:
-            log.info("turn %s of call %s: %s", seq, call_id, str(e)[:120])
-
-
-async def fetch_version(agent_id: str, version: int) -> dict:
-    """A specific version (used by test runs, which check the exact version a person is about to publish)."""
-    async with _client() as c:
-        r = await c.get("/agents", params={"id": f"eq.{agent_id}", "select": "id,name,tenant_id,published_version"})
-        r.raise_for_status()
-        if not r.json():
-            raise RuntimeError(f"Agent {agent_id} not found")
-        agent = r.json()[0]
-        r = await c.get("/agent_versions", params={"agent_id": f"eq.{agent_id}", "version": f"eq.{version}", "select": "version,config"})
-        r.raise_for_status()
-        if not r.json():
-            raise RuntimeError(f"Version {version} not found")
-        return {"agent": agent, "version": version, "config": r.json()[0]["config"]}
+    try:
+        await supa.update("call_turns", {"call_id": call_id, "seq": seq}, {"text": text, "text_live": live_text})
+    except Exception as e:  # noqa: BLE001
+        log.info("turn %s of call %s: %s", seq, call_id, str(e)[:120])

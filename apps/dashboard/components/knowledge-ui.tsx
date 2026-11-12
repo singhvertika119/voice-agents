@@ -1,10 +1,11 @@
 "use client";
 
-import { type FormEvent, useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { Check, FileUp } from "lucide-react";
-import { Button, Card, Field, inputCls, textareaCls } from "@/components/ui";
-import { addSource, chatKnowledge, type AddState, type ChatReply, type ChatTurn } from "@/app/(app)/knowledge/actions";
+import { type FormEvent, useActionState, useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { FileUp } from "lucide-react";
+import { Button, Card, Field, FormResult, inputCls, textareaCls } from "@/components/ui";
+import { ConfirmButton, useResetOnOk } from "@/components/client-ui";
+import { addSource, chatKnowledge, type ChatReply, type ChatTurn } from "@/app/(app)/knowledge/actions";
+import type { ActionState } from "@/lib/action-state";
 
 const MODES = [
   { id: "file", label: "Upload files" },
@@ -15,16 +16,10 @@ const MODES = [
 
 export function AddKnowledge() {
   const [mode, setMode] = useState<(typeof MODES)[number]["id"]>("file");
-  const [state, action, pending] = useActionState<AddState, FormData>(addSource, null);
+  const [state, action, pending] = useActionState<ActionState, FormData>(addSource, null);
   const form = useRef<HTMLFormElement>(null);
   const [fileName, setFileName] = useState("");
-
-  useEffect(() => {
-    if (state?.ok) {
-      form.current?.reset();
-      setFileName("");
-    }
-  }, [state]);
+  useResetOnOk(state, form, useCallback(() => setFileName(""), []));
 
   return (
     <Card className="p-5 flex flex-col gap-5">
@@ -78,43 +73,18 @@ export function AddKnowledge() {
         )}
         <div className="flex flex-wrap items-center gap-4">
           <Button disabled={pending}>{pending ? "Adding..." : "Add"}</Button>
-          {state && (
-            <p role={state.ok ? "status" : "alert"} className={`text-[13px] inline-flex items-center gap-1.5 ${state.ok ? "text-success-fg" : "text-danger-fg"}`}>
-              {state.ok && <Check size={14} strokeWidth={2.5} aria-hidden />} {state.message}
-            </p>
-          )}
+          <FormResult state={state} />
         </div>
       </form>
     </Card>
   );
 }
 
-// Re-reads the page while anything is still being processed, so statuses move without a manual refresh.
-export function AutoRefresh({ active }: { active: boolean }) {
-  const router = useRouter();
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 3000);
-    return () => clearInterval(t);
-  }, [active, router]);
-  return null;
-}
-
 export function SourceActions({ id, canRetry, onRetry, onDelete }: { id: string; canRetry: boolean; onRetry: (id: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
-  const [pending, start] = useTransition();
   return (
     <div className="flex gap-2">
-      {canRetry && <Button variant="secondary" className="h-9" disabled={pending} onClick={() => start(() => onRetry(id))}>Try again</Button>}
-      <Button
-        variant="secondary"
-        className="h-9"
-        disabled={pending}
-        onClick={() => {
-          if (confirm("Delete this? Agents using it will stop answering from it.")) start(() => onDelete(id));
-        }}
-      >
-        Delete
-      </Button>
+      {canRetry && <ConfirmButton label="Try again" run={() => onRetry(id)} />}
+      <ConfirmButton label="Delete" run={() => onDelete(id)} confirmText="Delete this? Agents using it will stop answering from it." />
     </div>
   );
 }

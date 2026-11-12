@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
-import { Badge, Card, CardHeader } from "@/components/ui";
-import { duration, inr, time } from "@/lib/format";
-import { createClient } from "@supabase/supabase-js";
+import { Badge, Card } from "@/components/ui";
+import { OUTCOME, duration, inr, time } from "@/lib/format";
+import { adminClient } from "@/lib/supabase/admin";
 import { CallReview } from "@/components/call-review";
 
 export default async function CallDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -11,7 +11,7 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
   const supabase = await supabaseServer();
   const [{ data: call }, { data: turns }] = await Promise.all([
     supabase.from("calls").select("*, agents(name)").eq("id", id).single(),
-    supabase.from("call_turns").select("seq,speaker,text,at_ms,latency_ms").eq("call_id", id).order("seq"),
+    supabase.from("call_turns").select("seq,speaker,text,text_live,at_ms,latency_ms").eq("call_id", id).order("seq"),
   ]);
   if (!call) notFound();
   const agent = call.agents as { name: string } | null;
@@ -19,8 +19,7 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
   // The link works for 10 minutes and only for this one file.
   let audioUrl: string | null = null;
   if (call.recording_path) {
-    const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    const { data: signed } = await admin.storage.from("recordings").createSignedUrl(call.recording_path, 600);
+    const { data: signed } = await adminClient().storage.from("recordings").createSignedUrl(call.recording_path, 600);
     audioUrl = signed?.signedUrl ?? null;
   }
   const st = call.structured as { intent?: string; commitments?: string[]; open_items?: string[] } | null;
@@ -49,7 +48,7 @@ export default async function CallDetail({ params }: { params: Promise<{ id: str
         <p className="text-[13px] text-ink-muted"><Link href="/calls" className="hover:text-ink inline-flex items-center min-h-11 pr-1">Calls</Link> / {time(call.started_at)}</p>
         <div className="flex flex-wrap items-center gap-3 mt-1">
           <h1 className="text-xl font-semibold">{agent?.name ?? "Deleted agent"}</h1>
-          {call.outcome && <Badge tone={call.outcome === "resolved" ? "success" : call.outcome === "dropped" ? "danger" : "warning"}>{({ resolved: "Resolved", handed_off: "Handed off", callback: "Callback booked", dropped: "Dropped" } as Record<string, string>)[call.outcome] ?? call.outcome}</Badge>}
+          {call.outcome && <Badge tone={OUTCOME[call.outcome]?.tone ?? "neutral"}>{OUTCOME[call.outcome]?.label ?? call.outcome}</Badge>}
         </div>
       </div>
 

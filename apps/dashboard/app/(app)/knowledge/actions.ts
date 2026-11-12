@@ -1,31 +1,23 @@
 "use server";
 
-import { createHmac } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
-import { supabaseServer } from "@/lib/supabase/server";
+import { done, fail, type ActionState } from "@/lib/action-state";
+import { canEdit, currentMember } from "@/lib/membership";
 import { chatCompletion } from "@/lib/openai-key";
+import { sign } from "@/lib/server-security";
+import { adminClient } from "@/lib/supabase/admin";
+import { supabaseServer } from "@/lib/supabase/server";
 
-export type AddState = { ok: boolean; message: string; at: number } | null;
 type Passage = { section: string | null; content: string; source: string };
 
 const MAX_BYTES = 15_000_000;
 const KINDS = ["pdf", "docx", "txt", "md", "csv", "xlsx"];
 
-const fail = (message: string): AddState => ({ ok: false, message, at: Date.now() });
-const done = (message: string): AddState => ({ ok: true, message, at: Date.now() });
-
-async function member() {
-  const supabase = await supabaseServer();
-  const { data } = await supabase.from("tenant_members").select("tenant_id,role").limit(1).single();
-  return { supabase, tenantId: data?.tenant_id as string | undefined, role: data?.role as string | undefined };
-}
-
 // One entry point for all four ways of adding knowledge. The source row is created as the signed-in user
 // (so row-level security decides if they may), then the ingestion worker picks it up.
-export async function addSource(_prev: AddState, formData: FormData): Promise<AddState> {
-  const { supabase, tenantId, role } = await member();
-  if (!tenantId || !["owner", "admin", "editor"].includes(role ?? "")) return fail("You do not have permission to add knowledge.");
+export async function addSource(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const { supabase, tenantId, role } = await currentMember();
+  if (!tenantId || !canEdit(role)) return fail("You do not have permission to add knowledge.");
   const mode = String(formData.get("mode"));
   const name = String(formData.get("name") ?? "").trim();
   let row: Record<string, unknown>;
@@ -60,10 +52,9 @@ export async function addSource(_prev: AddState, formData: FormData): Promise<Ad
 
   if (file) {
     // Storage writes use the service key on the server, only after the insert above proved membership.
-    const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const safe = file.name.replace(/[^\w.\-]+/g, "_");
     const path = `${tenantId}/${src.id}/${safe}`;
-    const up = await admin.storage.from("knowledge").upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type || undefined });
+    const up = await adminClient().storage.from("knowledge").upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type || undefined });
     if (up.error) {
       await supabase.from("knowledge_sources").update({ status: "failed", error: "The upload did not finish. Try again." }).eq("id", src.id);
       revalidatePath("/knowledge");
@@ -86,8 +77,7 @@ export async function deleteSource(id: string) {
   const { data: src } = await supabase.from("knowledge_sources").select("storage_path").eq("id", id).single();
   await supabase.from("knowledge_sources").delete().eq("id", id); // chunks and tables cascade
   if (src?.storage_path) {
-    const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    await admin.storage.from("knowledge").remove([src.storage_path]);
+    await adminClient().storage.from("knowledge").remove([src.storage_path]);
   }
   revalidatePath("/knowledge");
 }
@@ -128,7 +118,7 @@ async function embedQuestions(texts: string[]): Promise<number[][] | null> {
   if (!key) return null;
   const body = JSON.stringify({ texts });
   const ts = Math.floor(Date.now() / 1000).toString();
-  const signature = createHmac("sha256", key).update(`${ts}.${body}`).digest("hex");
+  const signature = sign(key, ts, body);
   try {
     const r = await fetch(`${BACKGROUND_URL}/embed`, {
       method: "POST",
@@ -151,7 +141,7 @@ export async function chatKnowledge(sourceId: string, history: ChatTurn[]): Prom
   const turns = history.slice(-8).filter((t) => t.content.trim());
   const question = turns.at(-1)?.role === "user" ? turns.at(-1)!.content.trim().slice(0, 1000) : "";
   if (question.length < 2) return { answer: "", passages: [], error: "Type a question first." };
-  const { supabase, tenantId } = await member();
+  const { supabase, tenantId } = await currentMember();
   if (!tenantId) return { answer: "", passages: [], error: "Sign in again to use the chat." };
   let q = supabase.from("knowledge_sources").select("id,name").eq("status", "ready");
   if (sourceId !== "all") q = q.eq("id", sourceId);

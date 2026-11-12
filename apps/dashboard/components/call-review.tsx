@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui";
 
-export type Turn = { seq: number; speaker: string; text: string; at_ms: number | null; latency_ms: number | null };
+// text_live: what the agent heard during the call, kept when the recording was transcribed again afterwards (D-097).
+type Turn = { seq: number; speaker: string; text: string; text_live?: string | null; at_ms: number | null; latency_ms: number | null };
 
 const BARS = 60;
 const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -146,6 +147,9 @@ export function CallReview({ turns, audioUrl, seconds }: { turns: Turn[]; audioU
               <div className={`flex-1 flex flex-col gap-1 ${t.speaker === "caller" ? "items-end" : ""}`}>
                 <span className="text-xs font-medium text-ink-muted">{t.speaker === "caller" ? "Caller" : "Agent"}</span>
                 <p className={`text-sm leading-[1.55] ${t.speaker === "caller" ? "px-3.5 py-2.5 rounded-lg bg-muted" : ""}`}>{t.text}</p>
+                {t.text_live && t.text_live !== t.text && (
+                  <span className="text-xs text-ink-muted max-w-[90%]">Heard during the call: {t.text_live}</span>
+                )}
                 {t.speaker === "agent" && t.latency_ms != null && (
                   <span className="px-2 py-[3px] rounded-sm border border-line text-xs text-ink-secondary font-mono w-fit">{(t.latency_ms / 1000).toFixed(1)} s</span>
                 )}

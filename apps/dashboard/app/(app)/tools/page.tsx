@@ -1,6 +1,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
-import { AddToolForm, TestToolForm, ToolButton } from "@/components/tools-ui";
+import { AddToolForm, TestToolForm } from "@/components/tools-ui";
+import { ConfirmButton } from "@/components/client-ui";
 import { deleteTool, setToolEnabled } from "./actions";
 
 export default async function ToolsPage() {
@@ -12,7 +13,7 @@ export default async function ToolsPage() {
   return (
     <>
       <PageHeader title="Tools" intro="Actions your agents can take in your own systems." />
-      {error && <p role="alert" className="text-[13px] text-danger-fg">Tools are not available yet: the database update for them has not been applied.</p>}
+      {error && <p role="alert" className="text-[13px] text-danger-fg">Your tools could not be loaded. Refresh the page.</p>}
       <div className="flex flex-wrap gap-6 items-start">
         <div className="flex-[999_1_480px] min-w-0 flex flex-col gap-6">
           {!tools?.length ? (
@@ -34,8 +35,8 @@ export default async function ToolsPage() {
                         <span className="font-mono text-xs text-ink-muted break-all">{t.method} {t.endpoint} · {t.timeout_ms / 1000}s limit{t.auth_header ? " · credential saved" : ""}</span>
                       </div>
                       <div className="flex gap-2">
-                        <ToolButton label={t.enabled ? "Turn off" : "Turn on"} onClick={setToolEnabled.bind(null, t.id, !t.enabled)} />
-                        <ToolButton label="Delete" danger onClick={deleteTool.bind(null, t.id)} />
+                        <ConfirmButton label={t.enabled ? "Turn off" : "Turn on"} run={setToolEnabled.bind(null, t.id, !t.enabled)} />
+                        <ConfirmButton label="Delete" run={deleteTool.bind(null, t.id)} confirmText="Delete this tool? Agents using it will stop using it." />
                       </div>
                     </div>
                     <TestToolForm id={t.id} />

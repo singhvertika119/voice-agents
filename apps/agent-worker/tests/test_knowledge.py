@@ -31,10 +31,16 @@ def test_keyword_terms_for_fallback_search():
     assert keyword_terms("What are the fees for ECG?") == ["what", "are", "the", "fees", "for", "ecg"]
     assert keyword_terms("ECG ki fees kitni hai, ECG?") == ["ecg", "fees", "kitni", "hai"]
     assert keyword_terms("a b") == []
+    assert keyword_terms("ईसीजी की फीस कितनी है।") == ["ईसीजी", "फीस", "कितनी"]   # the "।" stop is not part of a word
+
+
+def test_hindi_full_stop_does_not_block_a_table_match():
+    assert search_rows([{"name": "Prices", "columns": ["Service", "Price"],
+                         "rows": [{"Service": "ईसीजी", "Price": "400"}]}], "", "ईसीजी।")[0]["Price"] == "400"
 
 
 # ---- D-111: no search for small talk; contact/about/location sections always in the prompt
-from agent_worker.knowledge import CORE_SECTION, KnowledgeBase, is_small_talk  # noqa: E402
+from agent_worker.knowledge import CORE_SECTION, is_small_talk  # noqa: E402
 
 
 def test_small_talk_is_not_searched():

@@ -66,12 +66,8 @@ async def load(tenant_id: str | None) -> TenantKey | None:
         return hit[1]
     key = None
     try:
-        try:
-            rows = await supa.select("tenant_api_keys", select="secret_enc,status,checked_at,use_for",
-                                     tenant_id=f"eq.{tenant_id}", provider="eq.openai")
-        except Exception:  # noqa: BLE001  database without 0012: the key still works for calls
-            rows = await supa.select("tenant_api_keys", select="secret_enc,status,checked_at",
-                                     tenant_id=f"eq.{tenant_id}", provider="eq.openai")
+        rows = await supa.select("tenant_api_keys", select="secret_enc,status,checked_at,use_for",
+                                 tenant_id=f"eq.{tenant_id}", provider="eq.openai")
         if rows:
             r = rows[0]
             key = TenantKey(tenant_id, secrets.decrypt(r["secret_enc"]), r["status"], _parse_time(r.get("checked_at")),

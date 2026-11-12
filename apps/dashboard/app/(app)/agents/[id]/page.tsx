@@ -6,7 +6,9 @@ import { findPlaceholders, type AgentConfig } from "@/lib/agent-config";
 import { time } from "@/lib/format";
 import { TestPanel } from "@/components/test-panel";
 import { AgentEditor, type SourceOption, type ToolOption } from "@/components/agent-editor";
-import { AddScenarioForm, AutoRefresh, RunButton, SmallButton } from "@/components/tests-ui";
+import { AddScenarioForm, RunButton } from "@/components/tests-ui";
+import { AutoRefresh, ConfirmButton } from "@/components/client-ui";
+import { isAdmin } from "@/lib/membership";
 import { deleteAgent, publish } from "../actions";
 import { clearKnowledgeQuestions, deleteScenario, queueTests, setAgentEnabled, stopRun } from "../test-runs";
 import { STOPPED } from "@/lib/test-runs";
@@ -38,7 +40,7 @@ export default async function AgentBuilder({
   const [{ data: agent }, { data: versions }, { data: srcRows }, { data: toolRows }, { data: member }, { data: runRows }, { data: scenarioRows }] = await Promise.all([
     supabase.from("agents").select("id,name,published_version,enabled").eq("id", id).single(),
     supabase.from("agent_versions").select("version,status,config,note,created_at,published_at").eq("agent_id", id).order("version", { ascending: false }),
-    onEditor ? supabase.from("knowledge_sources").select("id,name,status,stats").order("created_at", { ascending: false }) : nothing,
+    onEditor ? supabase.from("knowledge_sources").select("id,name,status").order("created_at", { ascending: false }) : nothing,
     onEditor ? supabase.from("tools").select("id,name,description,enabled,requires_confirmation").order("name") : nothing,
     onVersions ? supabase.from("tenant_members").select("role").limit(1).single() : nothing,
     onVersions || onTests ? supabase.from("eval_runs").select("id,agent_version,status,passed,pass_rate,p95_reply_ms,results,error,created_at").eq("agent_id", id).order("created_at", { ascending: false }).limit(10) : nothing,
@@ -48,9 +50,9 @@ export default async function AgentBuilder({
   const latest = versions?.[0];
   const cfg = latest?.config as AgentConfig;
   const hasDraft = latest?.status === "draft";
-  const sources: SourceOption[] = (srcRows ?? []).map((r) => ({ id: r.id, name: r.name, status: r.status, chunks: Number((r.stats as { chunks?: number })?.chunks ?? 0) }));
+  const sources = (srcRows ?? []) as SourceOption[];
   const tools = (toolRows ?? []) as ToolOption[];
-  const canOverride = ["owner", "admin"].includes(member?.role ?? "");
+  const canOverride = isAdmin(member?.role);
   const editing = tab === "voice" ? "voice" : tab === "knowledge" ? "knowledge" : tab === "tools" ? "tools" : "instructions";
   const runs = (runRows ?? []) as RunRow[];
   const latestRunFor = (v: number) => runs.find((r) => r.agent_version === v);
@@ -87,12 +89,12 @@ export default async function AgentBuilder({
           ) : (
             agent.published_version && <Badge tone="success">{`Live v${agent.published_version}`}</Badge>
           )}
-          <SmallButton
+          <ConfirmButton
             label="Delete agent"
             run={deleteAgent.bind(null, id)}
             confirmText={`Delete "${agent.name}"? Its versions, test runs and what it remembers about callers are removed and cannot be brought back.${agent.published_version ? " It is live, so new calls to it will stop being answered." : ""} Past calls are kept. Your knowledge and tools are not touched.`}
           />
-          <SmallButton
+          <ConfirmButton
             label={agent.enabled === false ? "Resume agent" : "Pause agent"}
             run={setAgentEnabled.bind(null, id, agent.enabled === false)}
             confirmText={agent.enabled === false ? undefined : "Pause this agent? New callers will hear that the service is not available. Calls in progress continue."}
@@ -157,7 +159,7 @@ export default async function AgentBuilder({
 
               {tab === "tests" && (
                 <>
-                  <AutoRefresh active={running} />
+                  <AutoRefresh active={running} every={4000} />
                   <Card className="p-5 flex flex-col gap-3">
                     <h2 className="text-base font-semibold">Test conversations</h2>
                     <p className="text-sm leading-[1.55] text-ink-secondary">
@@ -194,7 +196,7 @@ export default async function AgentBuilder({
                             </span>
                           </div>
                           {(r.status === "queued" || r.status === "running") && (
-                            <SmallButton label="Stop" run={stopRun.bind(null, id, r.id)} confirmText="Stop this test run? Conversations already in progress finish first; the rest are skipped and no score is given." />
+                            <ConfirmButton label="Stop" run={stopRun.bind(null, id, r.id)} confirmText="Stop this test run? Conversations already in progress finish first; the rest are skipped and no score is given." />
                           )}
                         </div>
                         {(() => {
@@ -249,7 +251,7 @@ export default async function AgentBuilder({
                       caption={generated.length
                         ? "Written once from this agent's knowledge and asked in every run, so scores can be compared between versions. A new set is written when the knowledge changes."
                         : "The next test run writes these from this agent's knowledge and keeps them for later runs."}
-                      action={generated.length ? <SmallButton label="Write new questions" run={clearKnowledgeQuestions.bind(null, id)} confirmText="Remove these questions? The next test run writes a new set, so its score will not be comparable with earlier runs." /> : undefined}
+                      action={generated.length ? <ConfirmButton label="Write new questions" run={clearKnowledgeQuestions.bind(null, id)} confirmText="Remove these questions? The next test run writes a new set, so its score will not be comparable with earlier runs." /> : undefined}
                     />
                     {generated.length > 0 && (
                       <ul>
@@ -262,7 +264,7 @@ export default async function AgentBuilder({
                                 <span><Badge tone={kind[1] as "success" | "neutral" | "warning"}>{kind[0]}</Badge></span>
                                 <span className="break-words">{g.question}</span>
                               </span>
-                              <SmallButton label="Remove" run={deleteScenario.bind(null, id, s.id)} confirmText="Remove this question from future test runs?" />
+                              <ConfirmButton label="Remove" run={deleteScenario.bind(null, id, s.id)} confirmText="Remove this question from future test runs?" />
                             </li>
                           );
                         })}
@@ -277,7 +279,7 @@ export default async function AgentBuilder({
                         {own.map((s) => (
                           <li key={s.id} className="px-5 py-3 border-b border-line-subtle last:border-b-0 flex items-center justify-between gap-3 text-sm">
                             <span>{s.name}<span className="block text-[13px] text-ink-muted">{(s.spec as { caller_says?: string }).caller_says}</span></span>
-                            <SmallButton label="Delete" run={deleteScenario.bind(null, id, s.id)} confirmText="Delete this test?" />
+                            <ConfirmButton label="Delete" run={deleteScenario.bind(null, id, s.id)} confirmText="Delete this test?" />
                           </li>
                         ))}
                       </ul>

@@ -11,3 +11,9 @@ export function toE164(raw: string): string | null {
   digits = digits.replace(/^91(?=\d{10}$)/, "").replace(/^0(?=\d{10}$)/, "");
   return /^[6-9]\d{9}$/.test(digits) ? `+91${digits}` : null;
 }
+
+// An Indian mobile number only (the team's handoff phone, the test panel's "call from" number), as +91XXXXXXXXXX.
+export function indianMobile(raw: string): string | null {
+  const e164 = toE164(raw);
+  return e164 && /^\+91[6-9]\d{9}$/.test(e164) ? e164 : null;
+}

@@ -12,7 +12,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlparse, parse_qs
+from urllib.parse import unquote, urlparse, parse_qs
 
 import httpx
 from dotenv import load_dotenv

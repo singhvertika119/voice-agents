@@ -13,7 +13,6 @@ to call: this places a real call and spends your SIP provider's credit.
 """
 import asyncio
 import os
-import re
 import sys
 import uuid
 from pathlib import Path
