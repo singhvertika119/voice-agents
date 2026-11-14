@@ -102,7 +102,7 @@ class CallRecorder:
         if not self._io:
             return None, None
         try:
-            await self._io.aclose()
+            await asyncio.wait_for(self._io.aclose(), timeout=10.0)
         except Exception as e:
             log.warning("recorder did not close cleanly: %s", e)
         if not (tenant_id and call_id):

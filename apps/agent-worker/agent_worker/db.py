@@ -89,7 +89,7 @@ async def add_turn(call_id: str | None, tenant_id: str, turn: dict) -> None:
     if not call_id:
         return
     try:
-        await supa.insert("call_turns", {**turn, "call_id": call_id, "tenant_id": tenant_id})
+        await supa.insert("call_turns", {**turn, "call_id": call_id, "tenant_id": tenant_id}, timeout=10)
     except Exception as e:  # noqa: BLE001
         log.warning("could not save turn %s of call %s: %s", turn.get("seq"), call_id, e)
 
@@ -99,6 +99,8 @@ async def replace_turn_text(call_id: str | None, seq: int, text: str, live_text:
     if not call_id:
         return
     try:
-        await supa.update("call_turns", {"call_id": call_id, "seq": seq}, {"text": text, "text_live": live_text})
+        res = await supa.update("call_turns", {"call_id": call_id, "seq": seq}, {"text": text, "text_live": live_text})
+        if not res:
+            log.warning("replace_turn_text: 0 rows updated for call %s turn %s", call_id, seq)
     except Exception as e:  # noqa: BLE001
         log.info("turn %s of call %s: %s", seq, call_id, str(e)[:120])

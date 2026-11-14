@@ -128,18 +128,26 @@ async def load_custom_tools(tenant_id: str, tool_ids: list[str], state: CallStat
     for t in rows:
         try:
             secret = secrets.decrypt(enc[t["id"]]) if t["id"] in enc else None
+            out.append(_make_tool(t, secret, state))
         except Exception as e:
-            log.warning("tool %s: credential could not be decrypted (%s); tool skipped", t["name"], e)
+            log.warning("tool %s: setup failed (%s); tool skipped", t.get("name", t.get("id")), e)
             continue
-        out.append(_make_tool(t, secret, state))
     return out
 
 
 def _make_tool(t: dict, secret: str | None, state: CallState):
-    schema = json.loads(json.dumps(t["parameters"] or {"type": "object", "properties": {}}))
+    params = t.get("parameters")
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except Exception:
+            params = {}
+    if not isinstance(params, dict):
+        params = {"type": "object", "properties": {}}
+    schema = json.loads(json.dumps(params))
     schema.setdefault("type", "object")
     schema.setdefault("properties", {})
-    desc = t["description"].strip()
+    desc = (t.get("description") or "").strip()
     if t.get("requires_confirmation"):
         schema["properties"]["confirmed"] = {"type": "boolean", "description": "True only after you read the details back to the caller and they clearly said yes."}
         schema["required"] = sorted(set(schema.get("required", [])) | {"confirmed"})

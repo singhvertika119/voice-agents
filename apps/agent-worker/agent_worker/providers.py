@@ -53,8 +53,10 @@ def _has(*names: str) -> bool:
     return any(os.getenv(n) for n in names)
 
 
-def _stt(spec: dict, lang: str):
-    p = spec["provider"]
+def _stt(spec: dict | None, lang: str):
+    if not spec or not isinstance(spec, dict):
+        return None
+    p = spec.get("provider")
     if p == "sarvam" and _has("SARVAM_API_KEY") and not is_down("sarvam"):
         # high_vad_sensitivity makes Sarvam declare the end of an utterance sooner. Off (D-097) the live text was
         # cleaner but replies were about 0.5 s slower, because the reply waits for Sarvam's final transcript; on again
@@ -69,8 +71,10 @@ def _stt(spec: dict, lang: str):
     return None
 
 
-def _tts(spec: dict, lang: str):
-    p = spec["provider"]
+def _tts(spec: dict | None, lang: str):
+    if not spec or not isinstance(spec, dict):
+        return None
+    p = spec.get("provider")
     if p == "sarvam" and _has("SARVAM_API_KEY") and not is_down("sarvam"):
         # Start speaking sooner (D-115): Sarvam begins once it has 30 characters (its minimum; default 50), and the
         # plugin's sentence splitter is swapped for one that lets the first piece end at a comma. The plugin takes no
@@ -120,11 +124,13 @@ def _chain(adapter, items, what: str):
 
 def build_stack(cfg: AgentConfig) -> dict:
     lang = cfg.language
+    stt_cfg = cfg.stt if isinstance(getattr(cfg, "stt", None), dict) else {}
+    voice_cfg = cfg.voice if isinstance(getattr(cfg, "voice", None), dict) else {}
     return {
-        "stt": _chain(stt.FallbackAdapter, [_stt(cfg.stt["primary"], lang), _stt(cfg.stt["fallback"], lang)], "STT"),
+        "stt": _chain(stt.FallbackAdapter, [_stt(stt_cfg.get("primary"), lang), _stt(stt_cfg.get("fallback"), lang)], "STT"),
         "llm": build_llm(cfg),
-        "tts": _chain(tts.FallbackAdapter, [_tts(cfg.voice["tts_primary"], lang),
-                                            _tts(cfg.voice["tts_fallback"], lang)], "TTS"),
+        "tts": _chain(tts.FallbackAdapter, [_tts(voice_cfg.get("tts_primary"), lang),
+                                            _tts(voice_cfg.get("tts_fallback"), lang)], "TTS"),
     }
 
 

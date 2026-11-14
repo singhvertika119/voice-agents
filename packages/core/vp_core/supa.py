@@ -46,8 +46,8 @@ async def select(table: str, **params) -> list[dict]:
     return r.json()
 
 
-async def insert(table: str, rows: list[dict] | dict) -> list[dict]:
-    async with client(60) as c:
+async def insert(table: str, rows: list[dict] | dict, timeout: float = 60) -> list[dict]:
+    async with client(timeout) as c:
         r = await c.post(f"/rest/v1/{table}", json=rows)
         r.raise_for_status()
         return r.json()

@@ -127,111 +127,48 @@ async def entrypoint(ctx: JobContext):
     # The greeting is spoken exactly as the owner wrote it, so the record says that instead of claiming a standard notice was played.
     consent = {"notice": "owner_greeting_as_written", "version": CONSENT_NOTICE_VERSION,
                "at": datetime.now(timezone.utc).isoformat(), "recording_stored": bool(settings.get("record_calls", True)), "memory": bool(settings.get("memory_enabled"))}
-    if tenant_id:
-        call_row = await db.start_call(tenant_id, agent_ref, version, ctx.room.name, caller_number, consent)
-        if mode == "normal" and await workspace.active_calls(tenant_id, call_row) >= int(settings["max_concurrent_calls"]):
-            mode = "full"
 
-    contact_id, memory_block = (None, "")
-    if tenant_id and caller_number and mode == "normal" and settings.get("memory_enabled", True):
-        contact_id = await workspace.ensure_contact(tenant_id, caller_number)
-        cid, memory_block = await workspace.load_memory(tenant_id, caller_number, agent_ref, settings)
-        if cid:
-            contact_id = cid
-
-    state = CallState(tenant_id=tenant_id, agent_id=agent_ref, call_id=call_row, caller_number=caller_number, settings=settings)
-    kb = await load_knowledge(cfg.knowledge_sources, tenant_id, cfg.knowledge_mode) if tenant_id and mode == "normal" else KnowledgeBase()
-    tools = builtin_tools(state, workspace.DbBackend() if tenant_id else RecordingBackend())
-    if tenant_id and mode == "normal":
-        tools += await load_custom_tools(tenant_id, list(cfg.tool_ids or []), state)
-    extra_rules = DEGRADED_RULES if mode == "degraded" else ""
-    greeting = {"normal": cfg.greeting.strip(), "degraded": MSG_DEGRADED, "full": MSG_FULL, "disabled": MSG_OFF}[mode]
-
-    await probe_providers()
-    openai_key = await key_task
-    tenant_keys.use(openai_key)   # build_stack puts OpenAI first only with a working key; otherwise the free model
-    stack = build_stack(cfg)
-    for part in stack.values():  # open provider connections now, not on the first caller turn
-        try:
-            part.prewarm()
-        except Exception as e:
-            log.warning("prewarm failed: %s", e)
-    if openai_key and isinstance(stack["llm"], llm.FallbackAdapter):
-        # The workspace's key failed in this call (often: its credits ran out). Check why once and save it, so the
-        # next calls start with the free model instead of trying the dead key first on every reply (D-125).
-        checked: list[asyncio.Task] = []
-
-        @stack["llm"].on("llm_availability_changed")
-        def _key_failed(ev):
-            if not ev.available and getattr(ev.llm, "_vp_workspace_key", False) and not checked:
-                checked.append(asyncio.create_task(llm_chat.verify(openai_key)))
-    session = AgentSession(vad=ctx.proc.userdata["vad"], turn_detection=_turn_detector(cfg), min_endpointing_delay=0.3, **stack)
-    agent = VoiceAgent(cfg, kb, tools=tools, memory_block=memory_block, extra_rules=extra_rules)
-    want_recording = bool(tenant_id and mode == "normal" and settings.get("record_calls", True))
-    call_id = f"{cfg.id[:12]}-{uuid.uuid4().hex[:8]}"   # one name for this call's local files: recording and metrics log
-    recorder = CallRecorder(session, REPO_ROOT / "logs" / "recordings", call_id) if want_recording else None
-    mlog = CallMetricsLog(REPO_ROOT / "logs", call_id, cfg.id)
-    agent.on_prepared = mlog.on_prepared
-    mlog.note({"event": "mode", "mode": mode, "knowledge_mode": kb.mode, "memory": bool(memory_block), "caller": bool(caller_number)})
-    t_start, turns, tasks = time.time(), [], set()
-
-    def _watch(kind: str):
-        def handler(ev):
-            who = type(getattr(ev, kind, None)).__module__.split(".")[-2:] if getattr(ev, kind, None) else "?"
-            mlog.note({"event": "provider_available" if ev.available else "provider_unavailable", "kind": kind, "provider": ".".join(who)})
-            log.warning("%s provider %s is now %s", kind, ".".join(who), "available" if ev.available else "UNAVAILABLE (backup in use)")
-        return handler
-
-    for kind, name in (("llm", "llm_availability_changed"), ("stt", "stt_availability_changed"), ("tts", "tts_availability_changed")):
-        part = stack.get(kind)
-        if hasattr(part, "on"):
-            try:
-                part.on(name, _watch(kind))
-            except Exception:
-                pass
-
-    @session.on("metrics_collected")
-    def _on_metrics(ev: MetricsCollectedEvent):
-        mlog.on_metrics(ev.metrics)
-
-    @session.on("user_input_transcribed")
-    def _on_words(ev):
-        kb.prefetch(ev.transcript)
-
-    @session.on("conversation_item_added")
-    def _on_item(ev):
-        item = ev.item
-        if getattr(item, "role", None) in ("user", "assistant"):
-            mlog.on_message(item.role, dict(getattr(item, "metrics", None) or {}))   # per-reply timings (D-116)
-        text = getattr(item, "text_content", None)
-        if getattr(item, "role", None) in ("user", "assistant") and text:
-            # Identity numbers are removed before anything is stored (D-052).
-            turn = {"seq": len(turns), "speaker": "caller" if item.role == "user" else "agent", "text": redact(text),
-                    "at_ms": int((time.time() - t_start) * 1000), "interrupted": bool(getattr(item, "interrupted", False))}
-            turns.append(turn)
-            if tenant_id:
-                tasks.add(t := asyncio.create_task(db.add_turn(call_row, tenant_id, turn)))
-                t.add_done_callback(tasks.discard)
+    call_row: str | None = None
+    call_finished = False
+    call_id = f"{getattr(cfg, 'id', agent_ref or 'call')[:12]}-{uuid.uuid4().hex[:8]}"
+    t_start = time.time()
+    turns: list[dict] = []
+    tasks: set[asyncio.Task] = set()
+    mlog: CallMetricsLog | None = None
+    recorder: CallRecorder | None = None
+    kb: KnowledgeBase | None = None
+    state: CallState | None = None
+    contact_id: str | None = None
+    openai_key = None
 
     async def _finish():
         """Runs after the caller has gone. LiveKit gives this only `shutdown_process_timeout` seconds (set below), so the
         essentials are written FIRST and the slow extras (summary, memory, recording) are added afterwards. Before this
         order a long call could be killed mid-way and stay "in progress" forever, with no summary and no recording."""
+        nonlocal call_finished
+        if call_finished or not call_row:
+            return
+        call_finished = True
+
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        try:
-            mlog.close()
-            log.info("call %s cost ~$%.5f (list prices)", call_id, mlog.cost_usd())
-        except Exception as e:
-            log.warning("failed closing mlog: %s", e)
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
+            except Exception as e:
+                log.warning("waiting for turn inserts failed or timed out: %s", e)
+        if mlog:
+            try:
+                mlog.close()
+                log.info("call %s cost ~$%.5f (list prices)", call_id, mlog.cost_usd())
+            except Exception as e:
+                log.warning("failed closing mlog: %s", e)
         spoke = any(t["speaker"] == "caller" for t in turns)
-        outcome = "dropped" if mode in ("full", "disabled") else state.outcome(spoke)
+        outcome = "dropped" if mode in ("full", "disabled") or state is None else state.outcome(spoke)
         essentials = {"ended_at": datetime.now(timezone.utc).isoformat(), "duration_s": round(time.time() - t_start, 1),
-                      "avg_reply_ms": mlog.avg_reply_ms(), "cost_usd": round(mlog.cost_usd(), 6),
-                      "cost_breakdown": {**mlog.totals, "retrieval_ms": kb.retrieval_ms, "knowledge_mode": kb.mode, "mode": mode,
-                                         "replies": mlog.turn_timings(),   # shown on the call page (D-115)
-                                         "search_parts": kb.search_parts, "retrieve_log": kb.retrieve_log},   # D-118
-                      "language": cfg.language, "outcome": outcome, "tool_calls": state.tool_log, "contact_id": contact_id}
+                      "avg_reply_ms": mlog.avg_reply_ms() if mlog else 0, "cost_usd": round(mlog.cost_usd(), 6) if mlog else 0.0,
+                      "cost_breakdown": {**(mlog.totals if mlog else {}), "retrieval_ms": kb.retrieval_ms if kb else 0, "knowledge_mode": kb.mode if kb else "rag", "mode": mode,
+                                         "replies": mlog.turn_timings() if mlog else [],   # shown on the call page (D-115)
+                                         "search_parts": kb.search_parts if kb else [], "retrieve_log": kb.retrieve_log if kb else []},   # D-118
+                      "language": cfg.language, "outcome": outcome, "tool_calls": state.tool_log if state else [], "contact_id": contact_id}
         await db.finish_call(call_row, essentials)
 
         conversation = [t for t in turns if t["seq"] > 0 or t["speaker"] == "caller"]   # skip the fixed greeting for summaries
@@ -241,7 +178,7 @@ async def entrypoint(ctx: JobContext):
                 return {}
             use_memory = bool(contact_id) and settings.get("memory_enabled", True)
             prior, facts = await workspace.previous_summary(contact_id, agent_ref) if use_memory else ("", {})
-            s = await postcall.summarize(conversation, prior, facts, state.tool_log, with_memory=use_memory,
+            s = await postcall.summarize(conversation, prior, facts, state.tool_log if state else [], with_memory=use_memory,
                                          key=openai_key)
             if not s:
                 return {}
@@ -263,14 +200,34 @@ async def entrypoint(ctx: JobContext):
             if not recorder:
                 return {}
             callers = [t for t in turns if t["speaker"] == "caller"]
-            stored, better = await recorder.finish(
-                tenant_id, call_row,
-                analyse=lambda path: retranscribe.caller_turn_texts(path, callers, cfg.stt.get("primary") or {}, cfg.language))
-            for t in callers:   # the same dicts the summary reads, so it gets the better text too
-                new = redact(better.get(t["seq"], "")) if better else ""
-                if new and new != t["text"]:
-                    await db.replace_turn_text(call_row, t["seq"], new, t["text"])
-                    t["text"] = new
+            stt_primary = cfg.stt.get("primary") if isinstance(getattr(cfg, "stt", None), dict) else {}
+            try:
+                stored, better = await asyncio.wait_for(
+                    recorder.finish(
+                        tenant_id, call_row,
+                        analyse=lambda path: retranscribe.caller_turn_texts(path, callers, stt_primary or {}, cfg.language)),
+                    timeout=35.0,
+                )
+            except asyncio.TimeoutError:
+                log.warning("recorder.finish timed out after 35s")
+                stored, better = None, None
+            except Exception as e:
+                log.warning("recorder.finish failed: %s", e)
+                stored, better = None, None
+
+            if stored:
+                # Bug 1.6: Write recording path immediately so that even if re-transcription or summary
+                # times out or is killed, the recording is not orphaned in storage and shows in UI.
+                await db.finish_call(call_row, {"recording_path": stored[0], "recording_seconds": stored[1],
+                                                "consent": {**consent, "recording_stored": True}})
+
+            if better:
+                for t in callers:   # the same dicts the summary reads, so it gets the better text too
+                    new = redact(better.get(t["seq"], ""))
+                    if new and new != t["text"]:
+                        await db.replace_turn_text(call_row, t["seq"], new, t["text"])
+                        t["text"] = new
+
             extra = {"consent": {**consent, "recording_stored": bool(stored)}}
             if stored:
                 extra["recording_path"], extra["recording_seconds"] = stored
@@ -281,38 +238,138 @@ async def entrypoint(ctx: JobContext):
         # re-transcription has its own 30 s limit so this still finishes well inside the 90 s shutdown allowance.
         for step in (keep_recording, summarise):
             try:
-                extras.update(await step())
+                if step is summarise:
+                    extras.update(await asyncio.wait_for(step(), timeout=25.0))
+                else:
+                    extras.update(await step())
+            except asyncio.TimeoutError:
+                log.warning("end-of-call step %s timed out", step.__name__)
             except Exception as e:
                 log.warning("end-of-call step failed: %s", e)
         if extras:
             await db.finish_call(call_row, extras)
 
-    async def _warm_llm():
-        """The first real LLM request is slow (new connection, empty prompt cache). Send the agent's actual
-        prompt once, now, while the greeting plays, so the caller's first question does not pay for it."""
-        try:
-            warm = llm.ChatContext()
-            warm.add_message(role="system", content=build_instructions(cfg, kb, memory_block, extra_rules))
-            warm.add_message(role="user", content="Hello")
-            async with stack["llm"].chat(chat_ctx=warm) as stream:
-                async for _ in stream:
-                    break
-        except Exception as e:
-            log.warning("LLM warm-up failed: %s", e)
+    if tenant_id:
+        call_row = await db.start_call(tenant_id, agent_ref, version, ctx.room.name, caller_number, consent)
+        if call_row:
+            ctx.add_shutdown_callback(_finish)
+        if mode == "normal" and await workspace.active_calls(tenant_id, call_row) >= int(settings["max_concurrent_calls"]):
+            mode = "full"
 
-    if mode == "normal":
-        warm_task = asyncio.create_task(_warm_llm())
-        tasks.add(warm_task)
-        warm_task.add_done_callback(tasks.discard)
-    ctx.add_shutdown_callback(_finish)
-    await session.start(agent=agent, room=ctx.room)
-    if recorder and await recorder.attach() and recorder.started_at:
-        t_start = recorder.started_at   # transcript times now line up with the audio, so a click on a line can seek to it
-    agent.speak_in(tts_language(greeting, cfg.language))   # an English greeting is spoken with the English voice setting
-    if mode in ("full", "disabled"):
-        await _speak_and_hang_up(session, greeting)
-        return
-    await session.say(greeting, allow_interruptions=False)
+    try:
+        contact_id, memory_block = (None, "")
+        if tenant_id and caller_number and mode == "normal" and settings.get("memory_enabled", True):
+            contact_id = await workspace.ensure_contact(tenant_id, caller_number)
+            cid, memory_block = await workspace.load_memory(tenant_id, caller_number, agent_ref, settings)
+            if cid:
+                contact_id = cid
+
+        state = CallState(tenant_id=tenant_id, agent_id=agent_ref, call_id=call_row, caller_number=caller_number, settings=settings)
+        kb = await load_knowledge(cfg.knowledge_sources, tenant_id, cfg.knowledge_mode) if tenant_id and mode == "normal" else KnowledgeBase()
+        tools = builtin_tools(state, workspace.DbBackend() if tenant_id else RecordingBackend())
+        if tenant_id and mode == "normal":
+            tools += await load_custom_tools(tenant_id, list(cfg.tool_ids or []), state)
+        extra_rules = DEGRADED_RULES if mode == "degraded" else ""
+        greeting = {"normal": cfg.greeting.strip(), "degraded": MSG_DEGRADED, "full": MSG_FULL, "disabled": MSG_OFF}[mode]
+
+        await probe_providers()
+        openai_key = await key_task
+        tenant_keys.use(openai_key)   # build_stack puts OpenAI first only with a working key; otherwise the free model
+        stack = build_stack(cfg)
+        for part in stack.values():  # open provider connections now, not on the first caller turn
+            try:
+                part.prewarm()
+            except Exception as e:
+                log.warning("prewarm failed: %s", e)
+        if openai_key and isinstance(stack["llm"], llm.FallbackAdapter):
+            # The workspace's key failed in this call (often: its credits ran out). Check why once and save it, so the
+            # next calls start with the free model instead of trying the dead key first on every reply (D-125).
+            checked: list[asyncio.Task] = []
+
+            @stack["llm"].on("llm_availability_changed")
+            def _key_failed(ev):
+                if not ev.available and getattr(ev.llm, "_vp_workspace_key", False) and not checked:
+                    checked.append(asyncio.create_task(llm_chat.verify(openai_key)))
+        session = AgentSession(vad=ctx.proc.userdata["vad"], turn_detection=_turn_detector(cfg), min_endpointing_delay=0.3, **stack)
+        agent = VoiceAgent(cfg, kb, tools=tools, memory_block=memory_block, extra_rules=extra_rules)
+        want_recording = bool(tenant_id and mode == "normal" and settings.get("record_calls", True))
+        recorder = CallRecorder(session, REPO_ROOT / "logs" / "recordings", call_id) if want_recording else None
+        mlog = CallMetricsLog(REPO_ROOT / "logs", call_id, cfg.id)
+        agent.on_prepared = mlog.on_prepared
+        mlog.note({"event": "mode", "mode": mode, "knowledge_mode": kb.mode, "memory": bool(memory_block), "caller": bool(caller_number)})
+
+        def _watch(kind: str):
+            def handler(ev):
+                who = type(getattr(ev, kind, None)).__module__.split(".")[-2:] if getattr(ev, kind, None) else "?"
+                if mlog:
+                    mlog.note({"event": "provider_available" if ev.available else "provider_unavailable", "kind": kind, "provider": ".".join(who)})
+                log.warning("%s provider %s is now %s", kind, ".".join(who), "available" if ev.available else "UNAVAILABLE (backup in use)")
+            return handler
+
+        for kind, name in (("llm", "llm_availability_changed"), ("stt", "stt_availability_changed"), ("tts", "tts_availability_changed")):
+            part = stack.get(kind)
+            if hasattr(part, "on"):
+                try:
+                    part.on(name, _watch(kind))
+                except Exception:
+                    pass
+
+        @session.on("metrics_collected")
+        def _on_metrics(ev: MetricsCollectedEvent):
+            if mlog:
+                mlog.on_metrics(ev.metrics)
+
+        @session.on("user_input_transcribed")
+        def _on_words(ev):
+            if kb:
+                kb.prefetch(ev.transcript)
+
+        @session.on("conversation_item_added")
+        def _on_item(ev):
+            item = ev.item
+            if getattr(item, "role", None) in ("user", "assistant") and mlog:
+                mlog.on_message(item.role, dict(getattr(item, "metrics", None) or {}))   # per-reply timings (D-116)
+            text = getattr(item, "text_content", None)
+            if getattr(item, "role", None) in ("user", "assistant") and text:
+                # Identity numbers are removed before anything is stored (D-052).
+                turn = {"seq": len(turns), "speaker": "caller" if item.role == "user" else "agent", "text": redact(text),
+                        "at_ms": int((time.time() - t_start) * 1000), "interrupted": bool(getattr(item, "interrupted", False))}
+                turns.append(turn)
+                if tenant_id and call_row:
+                    tasks.add(t := asyncio.create_task(db.add_turn(call_row, tenant_id, turn)))
+                    t.add_done_callback(tasks.discard)
+
+        async def _warm_llm():
+            """The first real LLM request is slow (new connection, empty prompt cache). Send the agent's actual
+            prompt once, now, while the greeting plays, so the caller's first question does not pay for it."""
+            try:
+                warm = llm.ChatContext()
+                warm.add_message(role="system", content=build_instructions(cfg, kb, memory_block, extra_rules))
+                warm.add_message(role="user", content="Hello")
+                async with stack["llm"].chat(chat_ctx=warm) as stream:
+                    async for _ in stream:
+                        break
+            except Exception as e:
+                log.warning("LLM warm-up failed: %s", e)
+
+        if mode == "normal":
+            warm_task = asyncio.create_task(_warm_llm())
+            tasks.add(warm_task)
+            warm_task.add_done_callback(tasks.discard)
+
+        await session.start(agent=agent, room=ctx.room)
+        if recorder and await recorder.attach() and recorder.started_at:
+            t_start = recorder.started_at   # transcript times now line up with the audio, so a click on a line can seek to it
+        agent.speak_in(tts_language(greeting, cfg.language))   # an English greeting is spoken with the English voice setting
+        if mode in ("full", "disabled"):
+            await _speak_and_hang_up(session, greeting)
+            return
+        await session.say(greeting, allow_interruptions=False)
+    except Exception as e:
+        log.exception("call setup failed: %s", e)
+        if call_row:
+            await _finish()
+        raise
 
 
 if __name__ == "__main__":
