@@ -134,8 +134,10 @@ async def entrypoint(ctx: JobContext):
 
     contact_id, memory_block = (None, "")
     if tenant_id and caller_number and mode == "normal" and settings.get("memory_enabled", True):
-        await workspace.ensure_contact(tenant_id, caller_number)
-        contact_id, memory_block = await workspace.load_memory(tenant_id, caller_number, agent_ref, settings)
+        contact_id = await workspace.ensure_contact(tenant_id, caller_number)
+        cid, memory_block = await workspace.load_memory(tenant_id, caller_number, agent_ref, settings)
+        if cid:
+            contact_id = cid
 
     state = CallState(tenant_id=tenant_id, agent_id=agent_ref, call_id=call_row, caller_number=caller_number, settings=settings)
     kb = await load_knowledge(cfg.knowledge_sources, tenant_id, cfg.knowledge_mode) if tenant_id and mode == "normal" else KnowledgeBase()
@@ -217,8 +219,11 @@ async def entrypoint(ctx: JobContext):
         order a long call could be killed mid-way and stay "in progress" forever, with no summary and no recording."""
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        mlog.close()
-        log.info("call %s cost ~$%.5f (list prices)", call_id, mlog.cost_usd())
+        try:
+            mlog.close()
+            log.info("call %s cost ~$%.5f (list prices)", call_id, mlog.cost_usd())
+        except Exception as e:
+            log.warning("failed closing mlog: %s", e)
         spoke = any(t["speaker"] == "caller" for t in turns)
         outcome = "dropped" if mode in ("full", "disabled") else state.outcome(spoke)
         essentials = {"ended_at": datetime.now(timezone.utc).isoformat(), "duration_s": round(time.time() - t_start, 1),
@@ -244,8 +249,12 @@ async def entrypoint(ctx: JobContext):
             # memory plus this call's summary, trimmed (found when a returning caller was not remembered).
             rolling = s.get("rolling_summary") or " ".join(x for x in (prior, s.get("summary")) if x)[-1800:]
             if use_memory and rolling:
+                items = s.get("open_items")
+                cleaned_items = [str(x) for x in items] if isinstance(items, list) else []
+                lang = s.get("language")
+                lang_code = {"hindi": "hi", "english": "en"}.get(lang, None) if isinstance(lang, str) else None
                 await workspace.save_memory(tenant_id, agent_ref, contact_id, rolling, s.get("facts") or {},
-                                            [str(x) for x in (s.get("open_items") or [])], {"hindi": "hi", "english": "en"}.get(s.get("language") or "", None))
+                                            cleaned_items, lang_code)
             return {"summary": s.get("summary"),
                     "structured": {k: s.get(k) for k in ("intent", "outcome", "commitments", "open_items", "language", "name")}}
 

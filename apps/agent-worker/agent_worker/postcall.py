@@ -45,8 +45,20 @@ async def summarize(turns: list[dict], prior_summary: str = "", prior_facts: dic
         text = await llm_chat.chat([{"role": "user", "content": prompt}], model=MODEL, temperature=0, json_mode=True,
                                    max_tokens=900, timeout=45, key=key)
         out = json.loads(text)
+        if not isinstance(out, dict):
+            return None
         if out.get("outcome") not in ("resolved", "handed_off", "callback", "dropped"):
             out["outcome"] = None
+        for k in ("commitments", "open_items"):
+            v = out.get(k)
+            if isinstance(v, list):
+                out[k] = [str(x) for x in v if str(x).strip()]
+            elif isinstance(v, str) and v.strip().lower() not in ("", "none", "n/a", "null", "[]"):
+                out[k] = [v.strip()]
+            else:
+                out[k] = []
+        lang = out.get("language")
+        out["language"] = lang.strip().lower() if isinstance(lang, str) else None
         return out
     except Exception as e:
         log.warning("summary failed: %s", e)

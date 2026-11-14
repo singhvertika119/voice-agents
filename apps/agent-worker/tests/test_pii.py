@@ -39,3 +39,10 @@ def test_long_account_like_numbers_removed():
 
 def test_plain_text_untouched():
     assert redact("Consultation fee is 600 rupees at 9 am.") == "Consultation fee is 600 rupees at 9 am."
+    assert redact("Fees are about 1500 a month") == "Fees are about 1500 a month"
+    assert redact("Class 2024 A batch") == "Class 2024 A batch"
+
+
+def test_country_code_phone_and_order_number_kept():
+    assert "91 98765 43210" in redact("call me on 91 98765 43210")
+    assert "12345678901" in redact("order number 12345678901")

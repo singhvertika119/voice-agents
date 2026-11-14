@@ -33,6 +33,7 @@ export default async function AgentBuilder({
   const { id } = await params;
   const { tab = "instructions", error, live } = await searchParams;
   const supabase = await supabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
   const onVersions = tab === "versions", onTests = tab === "tests";
   const onEditor = !onVersions && !onTests;
   const nothing = Promise.resolve({ data: null as null });
@@ -42,7 +43,7 @@ export default async function AgentBuilder({
     supabase.from("agent_versions").select("version,status,config,note,created_at,published_at").eq("agent_id", id).order("version", { ascending: false }),
     onEditor ? supabase.from("knowledge_sources").select("id,name,status").order("created_at", { ascending: false }) : nothing,
     onEditor ? supabase.from("tools").select("id,name,description,enabled,requires_confirmation").order("name") : nothing,
-    onVersions ? supabase.from("tenant_members").select("role").limit(1).single() : nothing,
+    onVersions && user ? supabase.from("tenant_members").select("role").eq("user_id", user.id).maybeSingle() : nothing,
     onVersions || onTests ? supabase.from("eval_runs").select("id,agent_version,status,passed,pass_rate,p95_reply_ms,results,error,created_at").eq("agent_id", id).order("created_at", { ascending: false }).limit(10) : nothing,
     onTests ? supabase.from("eval_scenarios").select("id,name,spec,agent_id").or(`agent_id.eq.${id},agent_id.is.null`).order("created_at", { ascending: false }) : nothing,
   ]);

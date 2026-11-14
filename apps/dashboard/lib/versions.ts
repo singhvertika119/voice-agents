@@ -29,9 +29,10 @@ export async function createAgent(supabase: SupabaseClient, tenantId: string, na
 // Returns the version the config now lives in, or a message to show.
 export async function saveConfig(supabase: SupabaseClient, agentId: string, latest: VersionRow, config: AgentConfig, note: string): Promise<{ version: number } | { error: string }> {
   if (latest.status === "draft") {
-    const { data, error } = await supabase.from("agent_versions").update({ config }).eq("agent_id", agentId).eq("version", latest.version).select("version");
-    if (error || !data?.length) return { error: dbMessage(error, "You may not have permission to edit this agent.") };
-    return { version: latest.version };
+    const { data, error } = await supabase.from("agent_versions").update({ config }).eq("agent_id", agentId).eq("version", latest.version).eq("status", "draft").select("version");
+    if (error) return { error: dbMessage(error, "You may not have permission to edit this agent.") };
+    if (data?.length) return { version: latest.version };
+    // Someone published this version concurrently; fall through to create a new draft.
   }
   const { data, error } = await supabase.rpc("create_draft", { p_agent: agentId, p_config: config, p_note: note });
   if (error) return { error: dbMessage(error) };

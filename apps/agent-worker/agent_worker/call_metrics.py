@@ -5,10 +5,13 @@ Cost rates are rough list prices in USD, kept here so they are easy to correct (
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
 from livekit.agents import metrics
+
+log = logging.getLogger("call_metrics")
 
 # USD. Free tiers make the real spend zero; these record what production would cost.
 RATES = {
@@ -22,19 +25,28 @@ RATES = {
 
 class CallMetricsLog:
     def __init__(self, log_dir: Path, call_id: str, agent_id: str):
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self.path = log_dir / f"{call_id}.jsonl"
         self.totals = {"stt_sec": 0.0, "tts_chars": 0, "llm_in": 0, "llm_cached": 0, "llm_out": 0}
         self._turns: list[dict] = []   # one entry per caller turn: eou, ttft, ttfb
         self._replies: list[dict] = []  # per reply, from the messages' own timings (on_message)
         self._caller: dict | None = None
         self._search_ms = 0
-        self._write({"event": "call_started", "agent_id": agent_id})
+        self.path: Path | None = None
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            self.path = log_dir / f"{call_id}.jsonl"
+            self._write({"event": "call_started", "agent_id": agent_id})
+        except Exception as e:
+            log.warning("failed initializing metrics log: %s", e)
 
     def _write(self, rec: dict):
+        if not self.path:
+            return
         rec["ts"] = round(time.time(), 3)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        try:
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception as e:
+            log.warning("failed writing metrics log: %s", e)
 
     def note(self, rec: dict) -> None:
         """Add a free-form event to this call's log (mode, provider switches)."""
@@ -108,4 +120,7 @@ class CallMetricsLog:
                 + t["llm_out"] * RATES["llm_out_per_tok"])
 
     def close(self) -> None:
-        self._write({"event": "call_ended", "totals": self.totals, "cost_usd": round(self.cost_usd(), 5)})
+        try:
+            self._write({"event": "call_ended", "totals": self.totals, "cost_usd": round(self.cost_usd(), 5)})
+        except Exception as e:
+            log.warning("failed closing call metrics: %s", e)

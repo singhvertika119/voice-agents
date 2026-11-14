@@ -34,7 +34,7 @@ def luhn_ok(number: str) -> bool:
 
 # Digits separated by spaces or dashes, as speech-to-text writes them ("1234 5678 9012" or "1 2 3 4 ...").
 _RUN = re.compile(r"(?<![\w+])\d(?:[ \-]?\d){8,18}(?!\w)")
-_PAN = re.compile(r"\b[A-Za-z]{5}\s?\d{4}\s?[A-Za-z]\b")
+_PAN = re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")
 
 
 def redact(text: str) -> str:
@@ -44,8 +44,12 @@ def redact(text: str) -> str:
             return "[AADHAAR]"
         if 13 <= len(d) <= 19 and luhn_ok(d):
             return "[CARD]"
-        if len(d) >= 11:        # longer than a phone number: account-like
+        if len(d) == 12 and d.startswith("91") and d[2] in "6789":
+            return m.group(0)   # 12-digit Indian mobile with 91 prefix
+        if len(d) <= 11:
+            return m.group(0)   # 9, 10 or 11 digits: phone numbers (including 0-prefix) or order numbers
+        if len(d) >= 12:        # longer than a phone number: account-like
             return "[NUMBER]"
-        return m.group(0)       # 9 or 10 digits: phone number, kept
+        return m.group(0)
     out = _RUN.sub(digits, text)
     return _PAN.sub("[PAN]", out)

@@ -111,6 +111,15 @@ async def run_job(job: dict) -> None:
 
     try:
         pub = await db.fetch_version(agent_id, job["agent_version"])
+        if pub["agent"]["tenant_id"] != job["tenant_id"]:
+            log.warning("Agent %s belongs to tenant %s, not job tenant %s; aborting run",
+                        agent_id, pub["agent"]["tenant_id"], job["tenant_id"])
+            await supa.update("eval_runs", {"id": job["id"]}, {
+                "status": "failed",
+                "error": "Agent does not belong to workspace",
+                "finished_at": datetime.now(timezone.utc).isoformat()
+            })
+            return
         cfg = from_dict(agent_id, pub["agent"]["name"], pub["config"])
         kb = await load_knowledge(cfg.knowledge_sources, tenant, cfg.knowledge_mode)
         ktext = (cfg.knowledge + "\n" + kb.prompt_text).strip()
