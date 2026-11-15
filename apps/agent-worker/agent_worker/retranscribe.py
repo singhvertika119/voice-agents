@@ -125,7 +125,8 @@ async def _run(recording: Path, caller_turns: list[dict], stt_spec: dict, langua
                 try:
                     return await _sarvam(c, _wav(audio), model, mode, language)
                 except Exception as e:
-                    log.info("one piece could not be re-transcribed: %s", str(e)[:100])
+                    status = getattr(getattr(e, "response", None), "status_code", None)
+                    log.warning("one piece could not be re-transcribed (status=%s): %s", status, str(e)[:160])
                     return ""
         texts = await asyncio.gather(*(one(a) for _, _, a in pieces))
     live = {t["seq"]: t["text"] for t in caller_turns}

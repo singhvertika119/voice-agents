@@ -25,9 +25,12 @@ INTERRUPTED = ("Processing stopped part-way because the document reader restarte
 
 async def reset_stuck() -> None:
     """A previous run that died mid-way left sources in a working state. Retrying them automatically can crash the
-    worker on the same file after every restart, so they are closed as failed with a reason instead."""
+    worker on the same file after every restart, so they are closed as failed with a reason instead.
+    Only reset rows whose updated_at is older than 5 minutes so overlapping deploys do not kill active processing."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     async with supa.client() as c:
-        r = await c.patch("/rest/v1/knowledge_sources", params={"status": "in.(parsing,indexing,testing)"},
+        r = await c.patch("/rest/v1/knowledge_sources", params={"status": "in.(parsing,indexing,testing)", "updated_at": f"lt.{cutoff}"},
                           json={"status": "failed", "error": INTERRUPTED})
         if r.status_code < 300 and r.json():
             log.info("closed %d sources interrupted by a restart", len(r.json()))
@@ -37,19 +40,49 @@ async def purge_recordings() -> int:
     """Delete audio files older than each workspace's retention window (same window as transcripts), then forget the
     path. The database function cannot remove storage files, so this part lives here (docs/decision.md D-068)."""
     from datetime import datetime, timedelta, timezone
-    settings = {r["tenant_id"]: r["retention_days"] for r in await supa.select("tenant_settings", select="tenant_id,retention_days")}
-    rows = await supa.select("calls", select="id,tenant_id,recording_path,started_at", recording_path="not.is.null", limit="500")
-    now, gone = datetime.now(timezone.utc), 0
-    by_tenant: dict[str, list[dict]] = {}
-    for r in rows:
-        days = settings.get(r["tenant_id"], 90)
-        if datetime.fromisoformat(r["started_at"]) < now - timedelta(days=days):
-            by_tenant.setdefault(r["tenant_id"], []).append(r)
-    for rs in by_tenant.values():
-        await supa.remove("recordings", [r["recording_path"] for r in rs])
-        for r in rs:
-            await supa.update("calls", {"id": r["id"]}, {"recording_path": None})
-            gone += 1
+    now = datetime.now(timezone.utc)
+    try:
+        settings_rows = await supa.select("tenant_settings", select="tenant_id,retention_days")
+    except Exception as e:
+        log.warning("could not fetch tenant_settings for purge: %s", e)
+        return 0
+
+    settings = {r["tenant_id"]: r.get("retention_days") or 90 for r in settings_rows}
+    gone = 0
+
+    for tenant_id, days in settings.items():
+        cutoff = (now - timedelta(days=days)).isoformat()
+        try:
+            rows = await supa.select(
+                "calls",
+                select="id,recording_path,started_at",
+                tenant_id=f"eq.{tenant_id}",
+                recording_path="not.is.null",
+                started_at=f"lt.{cutoff}",
+                order="started_at.asc",
+                limit="500",
+            )
+            if not rows:
+                continue
+
+            paths = [r["recording_path"] for r in rows if r.get("recording_path")]
+            if paths:
+                try:
+                    await supa.remove("recordings", paths)
+                except Exception as e:
+                    log.warning("tenant %s: could not remove %d recordings from storage: %s", tenant_id, len(paths), e)
+                    continue
+
+                for r in rows:
+                    try:
+                        await supa.update("calls", {"id": r["id"]}, {"recording_path": None})
+                        gone += 1
+                    except Exception as e:
+                        log.warning("could not clear recording_path for call %s: %s", r["id"], e)
+        except Exception as e:
+            log.warning("purge failed for tenant %s: %s", tenant_id, e)
+            continue
+
     return gone
 
 
@@ -86,16 +119,21 @@ async def main() -> None:
     asyncio.create_task(refresh_loop())
     log.info("ingestion worker waiting for sources")
     while True:
-        heartbeat.beat("ingestion")
         try:
             src = await claim_next()
+            heartbeat.beat("ingestion")
         except Exception as e:  # database unreachable or tables missing: wait and retry
             log.warning("poll failed: %s", e)
             await asyncio.sleep(5)
             continue
         if src:
             log.info("processing %s (%s)", src["name"], src["source_type"])
-            await process(src)
+            try:
+                await asyncio.wait_for(process(src), timeout=300.0)
+            except asyncio.TimeoutError:
+                log.warning("processing %s timed out after 300s", src["id"])
+            except Exception as e:
+                log.exception("failed to process %s: %s", src["id"], e)
         else:
             await asyncio.sleep(2)
 

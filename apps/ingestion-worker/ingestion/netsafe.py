@@ -28,18 +28,24 @@ async def fetch_public_page(url: str, max_redirects: int = 3, html_only: bool = 
     async with httpx.AsyncClient(timeout=15, follow_redirects=False, headers=headers) as c:
         for _ in range(max_redirects + 1):
             await asyncio.to_thread(assert_public, url)  # re-check every hop; the DNS lookup blocks, so it runs in a thread
-            async with c.stream("GET", url) as r:
-                if r.is_redirect:
-                    url = urljoin(url, r.headers.get("location", ""))
-                    continue
-                if r.status_code >= 400:
-                    raise ParseError(f"The website answered with an error ({r.status_code}). Check the address or paste the text instead.")
-                if html_only and "html" not in r.headers.get("content-type", "html"):
-                    raise ParseError("That address is not a web page. For files, use Upload.")
-                body = b""
-                async for part in r.aiter_bytes():
-                    body += part
-                    if len(body) > MAX_BYTES:
-                        raise ParseError("That page is too large to import.")
-                return url, body.decode(r.encoding or "utf-8", errors="replace")
+            try:
+                async with c.stream("GET", url) as r:
+                    if r.is_redirect:
+                        url = urljoin(url, r.headers.get("location", ""))
+                        continue
+                    if r.status_code >= 400:
+                        raise ParseError(f"The website answered with an error ({r.status_code}). Check the address or paste the text instead.")
+                    if html_only and "html" not in r.headers.get("content-type", "html"):
+                        raise ParseError("That address is not a web page. For files, use Upload.")
+                    body = b""
+                    async def read_body():
+                        nonlocal body
+                        async for part in r.aiter_bytes():
+                            body += part
+                            if len(body) > MAX_BYTES:
+                                raise ParseError("That page is too large to import.")
+                    await asyncio.wait_for(read_body(), timeout=20.0)
+                    return url, body.decode(r.encoding or "utf-8", errors="replace")
+            except asyncio.TimeoutError:
+                raise ParseError("The website took too long to send the page content.")
     raise ParseError("That address redirects too many times.")

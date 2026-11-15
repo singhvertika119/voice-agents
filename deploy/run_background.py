@@ -24,6 +24,7 @@ from vp_core import embeddings, heartbeat  # noqa: E402
 log = logging.getLogger("background")
 STARTED = time.time()
 STATE = {"ingestion": "starting", "tests": "starting"}
+MODEL_STATE = "loading"
 # One test conversation holds about 450 MB (measured, docs/decision.md D-094); the 2 GB Standard instance runs the test
 # worker next to the document reader (render.yaml sets RUN_TEST_WORKER=1). Set it to 0 to leave test runs to
 # `scripts/run-evals.ps1` on a laptop.
@@ -45,11 +46,14 @@ async def supervise(name: str, fn):
 
 
 async def health(_request: web.Request) -> web.Response:
-    # Always 200 while the process is up: a long test run or document legitimately pauses the loop, and a failing
-    # health check would make Render restart the service mid-job. "last_poll_s" shows how long since each worker looked
-    # for work, and "memory_mb" how close the process is to the free instance's 512 MB.
-    return web.json_response({"ok": True, "uptime_s": int(time.time() - STARTED), "workers": STATE,
-                              "last_poll_s": heartbeat.ages(), "memory_mb": _memory_mb()})
+    ages = heartbeat.ages()
+    # If any active worker hasn't polled within 15 minutes (900s), or if embedding model failed to load, ok is false
+    stalled = any(age > 900 for age in ages.values())
+    ok = (not stalled) and (MODEL_STATE != "failed")
+    status = 200 if ok else 503
+    return web.json_response({"ok": ok, "uptime_s": int(time.time() - STARTED), "workers": STATE,
+                              "model": MODEL_STATE, "last_poll_s": ages, "memory_mb": _memory_mb()},
+                             status=status)
 
 
 async def embed(request: web.Request) -> web.Response:
@@ -94,8 +98,18 @@ async def main() -> None:
     port = int(os.getenv("PORT", "10000"))
     await web.TCPSite(runner, "0.0.0.0", port).start()
     log.info("health page on port %s", port)
-    # Load the embedding model now (about 0.3 GB, a second or two), not on the first chat question or document.
-    asyncio.get_running_loop().run_in_executor(None, embeddings.encoder)
+    # Load the embedding model now (about 0.3 GB, a second or two), and track its state for healthz
+    async def _load_model():
+        global MODEL_STATE
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, embeddings.encoder)
+            MODEL_STATE = "loaded"
+            log.info("embedding model loaded successfully")
+        except Exception as e:
+            MODEL_STATE = "failed"
+            log.exception("failed to load embedding model: %s", e)
+
+    asyncio.create_task(_load_model())
     workers = [supervise("ingestion", ingestion_main)]
     if RUN_TESTS:
         from evals.worker import main as tests_main   # imported only when used: the import alone is about 140 MB

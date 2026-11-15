@@ -54,12 +54,14 @@ async def run_suite(cfg: AgentConfig, kb: KnowledgeBase, scenarios: list[dict], 
 
     t0 = time.time()
     results = await asyncio.gather(*(one(s, i) for s, i in jobs))
-    by: dict[str, list[dict]] = {}
+    by: dict = {}
     for (s, _), r in zip(jobs, results):
-        by.setdefault(s["name"], []).append(r)
+        s_key = s.get("id") or id(s)
+        by.setdefault(s_key, []).append(r)
     report = []
     for s in scenarios:
-        rs = by.get(s["name"], [])
+        s_key = s.get("id") or id(s)
+        rs = by.get(s_key, [])
         rate = sum(r["passed"] for r in rs) / len(rs) if rs else 0.0
         report.append({"name": s["name"], "source": s.get("source", "standard"), "runs": len(rs), "pass_rate": round(rate, 2),
                        "required": s["pass_rate"], "passed": rate >= s["pass_rate"], "results": rs})

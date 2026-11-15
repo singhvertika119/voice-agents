@@ -36,11 +36,11 @@ MAX_REPLY_MS = 3000
 CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "3"))
 STALLED = ("This run stopped making progress (the test runner was restarted or ran out of memory while running it). "
            "Run the tests again.")
-STALE_MIN = 10        # no saved progress for this long means nobody is working on a "running" run (D-105)
+STALE_MIN = 20        # no saved progress for this long means nobody is working on a "running" run (D-105)
 CURRENT: dict = {}    # the run this worker is on, so a shutdown can hand it back
 # Nightly checks (D-108): every live agent that took a call in the last week is tested again at 2 am IST, so a score
 # that drops while nobody changed anything (a provider update, an edited website) shows up the next morning.
-NIGHTLY = os.getenv("NIGHTLY_TESTS", "weekly")       # on (every night) | weekly (Sunday night, the default to save model credits, D-125) | off
+NIGHTLY = os.getenv("NIGHTLY_TESTS", "weekly").strip().lower()       # on (every night) | weekly (Sunday night, the default to save model credits, D-125) | off
 NIGHTLY_RUNS = int(os.getenv("NIGHTLY_RUNS", "1"))    # attempts per scenario; 1 keeps the nightly cost low
 NIGHTLY_HOUR_IST = 2
 NIGHTLY_ACTIVE_DAYS = 7
@@ -124,17 +124,22 @@ async def run_job(job: dict) -> None:
         kb = await load_knowledge(cfg.knowledge_sources, tenant, cfg.knowledge_mode)
         ktext = (cfg.knowledge + "\n" + kb.prompt_text).strip()
         if kb.mode == "search":   # big knowledge bases are not in the prompt: sample passages so the judge has the facts
-            chunks = await supa.select("kb_chunks", select="content", source_id=f"in.({','.join(kb.source_ids)})", tenant_id=f"eq.{tenant}", limit="40")
+            chunks = await supa.select("kb_chunks", select="content", source_id=f"in.({','.join(kb.source_ids)})",
+                                       tenant_id=f"eq.{tenant}", order="idx.asc", limit="40")
             ktext += "\n" + "\n".join(c["content"] for c in chunks)
         settings = await workspace.get_settings(tenant)
 
         scenarios = sc.load_standard()
         try:
             custom = await supa.select("eval_scenarios", select="*", tenant_id=f"eq.{tenant}", enabled="eq.true")
-            scenarios += [sc.from_dashboard(r) for r in custom
-                          if r["agent_id"] in (None, agent_id) and (r.get("spec") or {}).get("source") != "generated"]
-        except Exception:
-            pass
+            for r in custom:
+                try:
+                    if r.get("agent_id") in (None, agent_id) and (r.get("spec") or {}).get("source") != "generated":
+                        scenarios.append(sc.from_dashboard(r))
+                except Exception as ex:
+                    log.warning("failed to parse custom scenario %s: %s", r.get("id"), ex)
+        except Exception as e:
+            log.warning("failed to fetch custom scenarios: %s", e)
         scenarios += sc.knowledge_scenarios(await knowledge_questions(tenant, agent_id, ktext))
 
         if await stopped():
@@ -158,15 +163,15 @@ async def run_job(job: dict) -> None:
             for r in s["results"]:
                 if r["passed"]:
                     r["transcript"] = r["transcript"][:0]
-        await supa.update("eval_runs", {"id": job["id"]}, {
+        await supa.update("eval_runs", {"id": job["id"], "status": "running"}, {
             "status": "done", "passed": report["passed"], "pass_rate": report["pass_rate"], "p95_reply_ms": report["p95_reply_ms"],
             "results": json.loads(json.dumps({**report, "scheduled": scheduled}, default=str)), "finished_at": datetime.now(timezone.utc).isoformat()})
         log.info("run %s: %s (%s/%s scenarios, p95 %s ms)", job["id"], "PASSED" if report["passed"] else "FAILED",
                  report["scenarios_passed"], report["scenarios_total"], report["p95_reply_ms"])
     except Exception as e:
         log.exception("test run failed")
-        await supa.update("eval_runs", {"id": job["id"]}, {"status": "failed", "error": f"{type(e).__name__}: {e}"[:500],
-                                                             "finished_at": datetime.now(timezone.utc).isoformat()})
+        await supa.update("eval_runs", {"id": job["id"], "status": "running"}, {"status": "failed", "error": f"{type(e).__name__}: {e}"[:500],
+                                                                                 "finished_at": datetime.now(timezone.utc).isoformat()})
 
 
 def _minutes_since(iso: str | None) -> float:
@@ -194,10 +199,13 @@ async def close_stalled() -> None:
 async def schedule_nightly() -> int:
     """Queue tonight's checks once 2 am IST has passed (D-108). Safe to call every minute and from more than one
     worker: an agent that already has a nightly run since 2 am is skipped. Returns how many runs were queued."""
-    if NIGHTLY not in ("on", "weekly"):
+    mode = os.getenv("NIGHTLY_TESTS", NIGHTLY).strip().lower()
+    is_every_night = mode in ("on", "true", "1", "yes")
+    is_weekly = mode in ("weekly",)
+    if not (is_every_night or is_weekly):
         return 0
     now = datetime.now(IST)
-    if now.hour < NIGHTLY_HOUR_IST or (NIGHTLY == "weekly" and now.weekday() != 6):
+    if now.hour < NIGHTLY_HOUR_IST or (is_weekly and now.weekday() != 6):
         return 0
     since = now.replace(hour=NIGHTLY_HOUR_IST, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
     active_since = (datetime.now(timezone.utc) - timedelta(days=NIGHTLY_ACTIVE_DAYS)).isoformat()
@@ -228,13 +236,14 @@ def _hand_back_on_shutdown() -> None:
         if run_id:
             url, key = os.environ["SUPABASE_URL"].rstrip("/"), os.environ["SUPABASE_SERVICE_ROLE_KEY"]
             try:
+                results = {"scheduled": True} if CURRENT.get("scheduled") else None
                 httpx.patch(f"{url}/rest/v1/eval_runs", params={"id": f"eq.{run_id}", "status": "eq.running"},
-                            json={"status": "queued", "results": None}, timeout=5,
+                            json={"status": "queued", "results": results}, timeout=5,
                             headers={"apikey": key, "Authorization": f"Bearer {key}"})
                 log.info("shutting down: run %s handed back to the queue", run_id)
             except Exception as e:
                 log.warning("shutting down: could not hand back run %s (%s)", run_id, e)
-        os._exit(0)
+        sys.exit(0)
     try:
         signal.signal(signal.SIGTERM, handler)
     except (ValueError, AttributeError):   # not the main thread, or a platform without SIGTERM: keep the default
@@ -264,10 +273,11 @@ async def main() -> None:
         if job:
             log.info("running tests for agent %s v%s", job["agent_id"], job["agent_version"])
             CURRENT["id"] = job["id"]
+            CURRENT["scheduled"] = bool((job.get("results") or {}).get("scheduled"))
             try:
                 await run_job(job)
             finally:
-                CURRENT.pop("id", None)
+                CURRENT.clear()
         else:
             await asyncio.sleep(3)
 
