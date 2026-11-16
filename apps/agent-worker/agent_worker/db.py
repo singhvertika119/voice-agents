@@ -37,10 +37,17 @@ async def _agent(agent_id: str) -> dict:
 
 
 async def _version(agent: dict, version: int | None) -> dict:
-    """One version's config; version=None means the newest (draft or not)."""
-    params = {"agent_id": f"eq.{agent['id']}", "select": "version,config"}
-    params.update({"version": f"eq.{version}"} if version is not None else {"order": "version.desc", "limit": "1"})
-    rows = await supa.select("agent_versions", **params)
+    """One version's config; version=None prefers an active draft, else published_version, else newest."""
+    if version is not None:
+        rows = await supa.select("agent_versions", agent_id=f"eq.{agent['id']}", select="version,config", version=f"eq.{version}")
+    else:
+        # Check for active draft first
+        rows = await supa.select("agent_versions", agent_id=f"eq.{agent['id']}", select="version,config", status="eq.draft", order="version.desc", limit="1")
+        if not rows and agent.get("published_version"):
+            # If no draft, use the published version (even if newer archived versions exist)
+            rows = await supa.select("agent_versions", agent_id=f"eq.{agent['id']}", select="version,config", version=f"eq.{agent['published_version']}", limit="1")
+        if not rows:
+            rows = await supa.select("agent_versions", agent_id=f"eq.{agent['id']}", select="version,config", order="version.desc", limit="1")
     if not rows:
         raise RuntimeError(f"Version {version} not found" if version is not None else f"Agent {agent['id']} has no versions")
     return {"agent": agent, "version": rows[0]["version"], "config": rows[0]["config"]}

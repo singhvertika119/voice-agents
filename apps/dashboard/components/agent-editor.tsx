@@ -84,14 +84,16 @@ export function AgentEditor({ agentId, name, cfg, sources, tools, initialTab }: 
             <ul className="flex flex-col gap-2">
               {sources.map((s) => {
                 const usable = s.status === "ready";
+                const isPicked = picked.includes(s.id);
                 return (
                   <li key={s.id} className="flex items-start gap-3 text-sm leading-snug">
+                    {!usable && isPicked && <input type="hidden" name="source" value={s.id} />}
                     <input
                       type="checkbox"
                       name="source"
                       value={s.id}
                       disabled={!usable}
-                      checked={picked.includes(s.id)}
+                      checked={isPicked}
                       onChange={(e) => setPicked(e.target.checked ? [...picked, s.id] : picked.filter((x) => x !== s.id))}
                       className="mt-0.5 size-4 accent-ink"
                       id={`src-${s.id}`}
@@ -124,20 +126,24 @@ export function AgentEditor({ agentId, name, cfg, sources, tools, initialTab }: 
             <p className="text-sm text-ink-muted">No tools added yet.</p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {tools.map((t) => (
-                <li key={t.id} className="flex items-start gap-3 text-sm leading-snug">
-                  <input
-                    type="checkbox" name="tool" value={t.id} id={`tool-${t.id}`} disabled={!t.enabled}
-                    checked={pickedTools.includes(t.id)}
-                    onChange={(e) => setPickedTools(e.target.checked ? [...pickedTools, t.id] : pickedTools.filter((x) => x !== t.id))}
-                    className="mt-0.5 size-4 accent-ink"
-                  />
-                  <label htmlFor={`tool-${t.id}`} className="flex flex-col gap-0.5">
-                    <span className="font-medium flex flex-wrap items-center gap-2"><span className="font-mono">{t.name}</span>{t.requires_confirmation && <Badge tone="warning">Asks to confirm</Badge>}{!t.enabled && <Badge>Off</Badge>}</span>
-                    <span className="text-[13px] text-ink-muted">{t.description}</span>
-                  </label>
-                </li>
-              ))}
+              {tools.map((t) => {
+                const isPicked = pickedTools.includes(t.id);
+                return (
+                  <li key={t.id} className="flex items-start gap-3 text-sm leading-snug">
+                    {!t.enabled && isPicked && <input type="hidden" name="tool" value={t.id} />}
+                    <input
+                      type="checkbox" name="tool" value={t.id} id={`tool-${t.id}`} disabled={!t.enabled}
+                      checked={isPicked}
+                      onChange={(e) => setPickedTools(e.target.checked ? [...pickedTools, t.id] : pickedTools.filter((x) => x !== t.id))}
+                      className="mt-0.5 size-4 accent-ink"
+                    />
+                    <label htmlFor={`tool-${t.id}`} className="flex flex-col gap-0.5">
+                      <span className="font-medium flex flex-wrap items-center gap-2"><span className="font-mono">{t.name}</span>{t.requires_confirmation && <Badge tone="warning">Asks to confirm</Badge>}{!t.enabled && <Badge>Off</Badge>}</span>
+                      <span className="text-[13px] text-ink-muted">{t.description}</span>
+                    </label>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>

@@ -19,7 +19,8 @@ export function AddKnowledge() {
   const [state, action, pending] = useActionState<ActionState, FormData>(addSource, null);
   const form = useRef<HTMLFormElement>(null);
   const [fileName, setFileName] = useState("");
-  useResetOnOk(state, form, useCallback(() => setFileName(""), []));
+  const [fileError, setFileError] = useState("");
+  useResetOnOk(state, form, useCallback(() => { setFileName(""); setFileError(""); }, []));
 
   return (
     <Card className="p-5 flex flex-col gap-5">
@@ -44,12 +45,36 @@ export function AddKnowledge() {
       <form ref={form} action={action} className="flex flex-col gap-4">
         <input type="hidden" name="mode" value={mode} />
         {mode === "file" && (
-          <label className="flex flex-col items-center justify-center gap-2 text-center px-4 py-8 rounded-xl border border-dashed border-line-dashed cursor-pointer">
-            <FileUp size={24} strokeWidth={1.75} aria-hidden />
-            <span className="text-sm font-medium">{fileName || "Choose a file"}</span>
-            <span className="text-[13px] text-ink-muted">PDF, Word, Excel, CSV or text. Up to 15 MB.</span>
-            <input type="file" name="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" className="sr-only" onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")} />
-          </label>
+          <div className="flex flex-col gap-2">
+            <label className="flex flex-col items-center justify-center gap-2 text-center px-4 py-8 rounded-xl border border-dashed border-line-dashed cursor-pointer">
+              <FileUp size={24} strokeWidth={1.75} aria-hidden />
+              <span className="text-sm font-medium">{fileName || "Choose a file"}</span>
+              <span className="text-[13px] text-ink-muted">PDF, Word, Excel, CSV or text. Up to 4.5 MB.</span>
+              <input
+                type="file"
+                name="file"
+                accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+                className="sr-only"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) {
+                    if (f.size > 4.5 * 1024 * 1024) {
+                      setFileError(`File is ${(f.size / (1024 * 1024)).toFixed(1)} MB. Files must be under 4.5 MB.`);
+                      setFileName("");
+                      e.target.value = "";
+                    } else {
+                      setFileError("");
+                      setFileName(f.name);
+                    }
+                  } else {
+                    setFileError("");
+                    setFileName("");
+                  }
+                }}
+              />
+            </label>
+            {fileError && <p className="text-[13px] text-danger-fg text-center">{fileError}</p>}
+          </div>
         )}
         {mode === "url" && (
           <Field label="Website address" helper="Enter your home page to read the whole website (up to 40 pages, contact and FAQ pages first), or a deeper page to read just that part. Pages that need a login or JavaScript may not be readable.">
@@ -72,7 +97,7 @@ export function AddKnowledge() {
           </Field>
         )}
         <div className="flex flex-wrap items-center gap-4">
-          <Button disabled={pending}>{pending ? "Adding..." : "Add"}</Button>
+          <Button disabled={pending || Boolean(fileError)}>{pending ? "Adding..." : "Add"}</Button>
           <FormResult state={state} />
         </div>
       </form>
@@ -80,11 +105,11 @@ export function AddKnowledge() {
   );
 }
 
-export function SourceActions({ id, canRetry, onRetry, onDelete }: { id: string; canRetry: boolean; onRetry: (id: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
+export function SourceActions({ id, canRetry, canDelete = true, onRetry, onDelete }: { id: string; canRetry: boolean; canDelete?: boolean; onRetry: (id: string) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
   return (
     <div className="flex gap-2">
       {canRetry && <ConfirmButton label="Try again" run={() => onRetry(id)} />}
-      <ConfirmButton label="Delete" run={() => onDelete(id)} confirmText="Delete this? Agents using it will stop answering from it." />
+      {canDelete && <ConfirmButton label="Delete" run={() => onDelete(id)} confirmText="Delete this? Agents using it will stop answering from it." />}
     </div>
   );
 }

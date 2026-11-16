@@ -3,12 +3,14 @@ import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui
 import { AddKnowledge, AskBox, SourceActions } from "@/components/knowledge-ui";
 import { AutoRefresh } from "@/components/client-ui";
 import { KNOWLEDGE_BUSY, KNOWLEDGE_STATUS as STATUS, time } from "@/lib/format";
+import { canEdit, currentMember } from "@/lib/membership";
 import { deleteSource, retrySource } from "./actions";
 
 type Stats = { pages?: number; checked_at?: string; refreshed_at?: string; check_error?: string | null; chunks?: number; tables?: { name: string; rows: number }[]; quality?: { tested: number; hit_rate: number; failed: { question: string; passage: string }[] } };
 
 export default async function KnowledgePage() {
-  const supabase = await supabaseServer();
+  const { supabase, role } = await currentMember();
+  const userCanEdit = canEdit(role);
   const { data: sources, error } = await supabase
     .from("knowledge_sources")
     .select("id,name,source_type,file_kind,url,status,error,parsed_md,stats,created_at")
@@ -33,6 +35,7 @@ export default async function KnowledgePage() {
                 {sources.map((s) => {
                   const st = STATUS[s.status] ?? STATUS.queued;
                   const stats = (s.stats ?? {}) as Stats;
+                  const isStuck = (s.status === "parsing" || s.status === "indexing") && (Date.now() - new Date(s.created_at).getTime() > 5 * 60 * 1000);
                   return (
                     <li key={s.id} className="px-5 py-4 border-b border-line-subtle last:border-b-0 flex flex-col gap-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -47,7 +50,7 @@ export default async function KnowledgePage() {
                             {stats.tables?.length ? ` · ${stats.tables.map((t) => `${t.name}: ${t.rows} rows`).join(", ")}` : ""}
                           </span>
                         </div>
-                        <SourceActions id={s.id} canRetry={s.status === "failed" || s.status === "needs_review"} onRetry={retrySource} onDelete={deleteSource} />
+                        <SourceActions id={s.id} canRetry={userCanEdit && (s.status === "failed" || s.status === "needs_review" || isStuck)} canDelete={userCanEdit} onRetry={retrySource} onDelete={deleteSource} />
                       </div>
                       {s.error && <p className="text-[13px] text-danger-fg">{s.error}</p>}
                       {s.source_type === "url" && s.status === "ready" && (

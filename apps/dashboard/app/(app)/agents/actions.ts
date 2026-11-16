@@ -6,7 +6,7 @@ import { dbMessage, done, fail, type ActionState } from "@/lib/action-state";
 import { DEFAULT_CONFIG, VOICES, findPlaceholders, type AgentConfig } from "@/lib/agent-config";
 import { currentMember } from "@/lib/membership";
 import { supabaseServer } from "@/lib/supabase/server";
-import { createAgent as create, latestVersion, publishVersion, saveConfig } from "@/lib/versions";
+import { createAgent as create, activeOrLatestVersion, latestVersion, publishVersion, saveConfig } from "@/lib/versions";
 
 export async function createAgent(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim() || "New agent";
@@ -20,7 +20,7 @@ export async function createAgent(formData: FormData) {
 // Saves the editor form into the latest draft (or a new draft, if the latest version is published).
 export async function saveDraft(agentId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
   const supabase = await supabaseServer();
-  const latest = await latestVersion(supabase, agentId);
+  const latest = await activeOrLatestVersion(supabase, agentId);
   if (!latest) return fail("Could not load the agent. Refresh the page and try again.");
 
   const next: AgentConfig = structuredClone(latest.config);
@@ -44,12 +44,12 @@ export async function saveDraft(agentId: string, _prev: ActionState, formData: F
   if (formData.get("sources_present") === "1") {
     const asked = formData.getAll("source").map(String);
     // Row-level security hides other workspaces' sources, so forged ids are dropped here.
-    const { data: mine } = asked.length ? await supabase.from("knowledge_sources").select("id").in("id", asked).eq("status", "ready") : { data: [] };
+    const { data: mine } = asked.length ? await supabase.from("knowledge_sources").select("id").in("id", asked) : { data: [] };
     next.knowledge_sources = (mine ?? []).map((r) => r.id as string);
   }
   if (formData.get("tools_present") === "1") {
     const asked = formData.getAll("tool").map(String);
-    const { data: mineTools } = asked.length ? await supabase.from("tools").select("id").in("id", asked).eq("enabled", true) : { data: [] };
+    const { data: mineTools } = asked.length ? await supabase.from("tools").select("id").in("id", asked) : { data: [] };
     next.tool_ids = (mineTools ?? []).map((r) => r.id as string);
   }
 

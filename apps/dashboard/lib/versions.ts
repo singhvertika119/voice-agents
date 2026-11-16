@@ -13,6 +13,23 @@ export async function latestVersion(supabase: SupabaseClient, agentId: string): 
   return data as VersionRow | null;
 }
 
+// Prefers the active draft if one exists, else the currently published version (even if newer versions were archived
+// after 'Make live again'), else the highest version.
+export async function activeOrLatestVersion(supabase: SupabaseClient, agentId: string): Promise<VersionRow | null> {
+  const { data: draft } = await supabase.from("agent_versions").select("version,status,config")
+    .eq("agent_id", agentId).eq("status", "draft").order("version", { ascending: false }).limit(1).maybeSingle();
+  if (draft) return draft as VersionRow;
+
+  const { data: agent } = await supabase.from("agents").select("published_version").eq("id", agentId).maybeSingle();
+  if (agent?.published_version) {
+    const { data: pub } = await supabase.from("agent_versions").select("version,status,config")
+      .eq("agent_id", agentId).eq("version", agent.published_version).maybeSingle();
+    if (pub) return pub as VersionRow;
+  }
+
+  return latestVersion(supabase, agentId);
+}
+
 // A new agent with its first draft. Returns the agent id, or a message to show.
 export async function createAgent(supabase: SupabaseClient, tenantId: string, name: string, config: AgentConfig | Record<string, unknown>, note: string): Promise<{ id: string } | { error: string }> {
   const { data: agent, error } = await supabase.from("agents").insert({ tenant_id: tenantId, name }).select("id").single();

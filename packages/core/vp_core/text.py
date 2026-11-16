@@ -1,7 +1,7 @@
 """Small text rules shared by the voice agent (speaking model replies) and the ingestion worker (storing knowledge)."""
 import re
 
-_RUPEES = re.compile(r"(?:₹|Rs\.?|INR)\s*([\d,]+)")
+_RUPEES = re.compile(r"(?:₹|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)")
 
 
 def spoken_rupees(text: str) -> str:

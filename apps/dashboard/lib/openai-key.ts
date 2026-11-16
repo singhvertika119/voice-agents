@@ -4,7 +4,7 @@
 import { decryptSecret } from "@/lib/server-security";
 import { adminClient } from "@/lib/supabase/admin";
 
-export type KeyStatus = "ok" | "no_credits" | "invalid" | "unchecked";
+export type KeyStatus = "ok" | "no_credits" | "invalid" | "unchecked" | "could_not_decrypt";
 export type KeyUse = "calls" | "everything";
 export type KeyCheck = KeyStatus | "unreachable";
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };

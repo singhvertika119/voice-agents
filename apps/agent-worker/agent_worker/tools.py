@@ -73,19 +73,21 @@ def normalize_phone(raw: str | None) -> str | None:
     """E.164, or None if it does not look like a valid number.
 
     A number with a leading + (or 00) is taken as international and kept as given (phone calls arrive this way,
-    including from outside India). Without one, only Indian mobile numbers are accepted, since that is what people
-    say aloud or type into the dashboard."""
+    including from outside India). Without one, Indian mobile numbers ([6-9]xxxxxxxxx) and 0 + STD landlines
+    (0xxxxxxxxxx, 11 digits) are accepted."""
     text = (raw or "").strip()
     digits = re.sub(r"\D", "", text)
     if text.startswith("+") or text.startswith("00"):
         digits = digits[2:] if text.startswith("00") else digits
         if digits.startswith("91"):
-            return f"+{digits}" if re.fullmatch(r"91\d{10}", digits) else None   # India: 10 digits after the country code
+            return f"+{digits}" if re.fullmatch(r"91[1-9]\d{9}", digits) else None   # India: 10 digits after the country code
         return f"+{digits}" if re.fullmatch(r"[1-9]\d{7,14}", digits) else None
     if len(digits) == 12 and digits.startswith("91"):
         digits = digits[2:]
+        return f"+91{digits}" if re.fullmatch(r"[1-9]\d{9}", digits) else None
     if len(digits) == 11 and digits.startswith("0"):
         digits = digits[1:]
+        return f"+91{digits}" if re.fullmatch(r"[1-9]\d{9}", digits) else None
     return f"+91{digits}" if re.fullmatch(r"[6-9]\d{9}", digits) else None
 
 
@@ -111,20 +113,43 @@ def read_back(context, e164: str) -> bool | None:
     return False
 
 
+def _normalize_time(t_str: str | None) -> str:
+    parts = (t_str or "").strip().split(":")
+    if len(parts) == 2:
+        try:
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        except ValueError:
+            pass
+    return (t_str or "00:00").strip()
+
+
 def within_hours(settings: dict | None, now: datetime | None = None) -> bool:
     h = (settings or {}).get("business_hours") or DEFAULT_HOURS
     now = (now or datetime.now(IST)).astimezone(IST)
-    if now.isoweekday() not in h.get("days", DEFAULT_HOURS["days"]):
+    valid_days = [d for d in h.get("days", DEFAULT_HOURS["days"]) if isinstance(d, int) and 1 <= d <= 7]
+    if now.isoweekday() not in valid_days:
         return False
-    return h.get("start", "09:00") <= now.strftime("%H:%M") < h.get("end", "19:00")
+    start = _normalize_time(h.get("start", "09:00"))
+    end = _normalize_time(h.get("end", "19:00"))
+    now_str = now.strftime("%H:%M")
+    if start <= end:
+        return start <= now_str < end
+    return now_str >= start or now_str < end
 
 
 def describe_hours(settings: dict | None) -> str:
     h = (settings or {}).get("business_hours") or DEFAULT_HOURS
     names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    days = sorted(h.get("days", []))
-    span = f"{names[days[0] - 1]} to {names[days[-1] - 1]}" if days else "no days"
-    return f"{span}, {h.get('start', '09:00')} to {h.get('end', '19:00')} IST"
+    days = sorted(set(d for d in h.get("days", []) if isinstance(d, int) and 1 <= d <= 7))
+    if not days:
+        span = "no days"
+    elif days == list(range(days[0], days[-1] + 1)) and len(days) >= 2:
+        span = f"{names[days[0] - 1]} to {names[days[-1] - 1]}"
+    else:
+        span = ", ".join(names[d - 1] for d in days)
+    start = _normalize_time(h.get("start", "09:00"))
+    end = _normalize_time(h.get("end", "19:00"))
+    return f"{span}, {start} to {end} IST"
 
 
 @dataclass
@@ -196,7 +221,7 @@ def builtin_tools(state: CallState, backend: Backend) -> list:
         """Book a callback from the team. Only after the caller confirmed the phone number.
 
         Args:
-            phone: The 10-digit mobile number.
+            phone: The 10-digit mobile or landline number.
             confirmed: True ONLY if you already read this number back to the caller digit by digit and their latest
                 message was a clear yes. Otherwise False.
             preferred_time: When the caller prefers to be called, in their words, or empty.
@@ -209,7 +234,7 @@ def builtin_tools(state: CallState, backend: Backend) -> list:
         e164 = normalize_phone(phone)
         if not e164:
             logged("schedule_callback", False, t0, problem="invalid_number")
-            return "That is not a valid 10-digit mobile number. Ask the caller to say it again, digit by digit."
+            return "That is not a valid phone number. Ask the caller to say it again, digit by digit."
         if read_back(context, e164) is False:
             logged("schedule_callback", False, t0, problem="not_read_back")
             return ("Not booked yet. You have not read this number back. Read it to the caller digit by digit, ask if it "

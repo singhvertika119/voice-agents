@@ -20,6 +20,7 @@ FIRST_CLAUSE_MIN = 25   # characters before the first early cut: shorter pieces 
 SENTENCE_MIN = 20       # same minimum as LiveKit's own sentence splitter
 _END = re.compile(r"(?<=[.!?।॥])[\"”')\]]*\s+")
 _CLAUSE = re.compile(r"(?<=[,;:])\s+")
+_ABBREVIATIONS = ("rs.", "dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "vs.", "etc.", "approx.", "e.g.", "i.e.")
 
 
 class ClauseSplitter:
@@ -38,6 +39,8 @@ class ClauseSplitter:
         early = False
         for cut_start, cut_end, is_clause in cuts:
             piece = text[start:cut_start].strip()
+            if not is_clause and any(piece.casefold().endswith(abbr) for abbr in _ABBREVIATIONS):
+                continue    # abbreviations ("Rs.", "Dr.") do not end a sentence
             if is_clause and (early or out or len(piece) < FIRST_CLAUSE_MIN):
                 continue    # only one early cut, and only for the reply's first piece
             if len(piece) < SENTENCE_MIN:

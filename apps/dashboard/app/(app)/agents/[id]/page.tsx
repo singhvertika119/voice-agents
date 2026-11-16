@@ -49,7 +49,8 @@ export default async function AgentBuilder({
   ]);
   if (!agent) notFound();
   const latest = versions?.[0];
-  const cfg = latest?.config as AgentConfig;
+  const activeVersion = latest?.status === "draft" ? latest : (versions?.find((v) => v.version === agent.published_version) ?? latest);
+  const cfg = activeVersion?.config as AgentConfig;
   const hasDraft = latest?.status === "draft";
   const sources = (srcRows ?? []) as SourceOption[];
   const tools = (toolRows ?? []) as ToolOption[];

@@ -10,7 +10,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 
 type Passage = { section: string | null; content: string; source: string };
 
-const MAX_BYTES = 15_000_000;
+const MAX_BYTES = 4_500_000;   // 4.5 MB Vercel serverless request body limit
 const KINDS = ["pdf", "docx", "txt", "md", "csv", "xlsx"];
 
 // One entry point for all four ways of adding knowledge. The source row is created as the signed-in user
@@ -35,7 +35,7 @@ export async function addSource(_prev: ActionState, formData: FormData): Promise
   } else if (mode === "file") {
     file = formData.get("file") as File | null;
     if (!file || file.size === 0) return fail("Choose a file to upload.");
-    if (file.size > MAX_BYTES) return fail("That file is larger than 15 MB. Upload a smaller copy.");
+    if (file.size > MAX_BYTES) return fail("That file is larger than 4.5 MB. Upload a smaller copy.");
     const kind = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!KINDS.includes(kind)) return fail("Use a PDF, Word (.docx), Excel (.xlsx), CSV or text file.");
     row = { source_type: "file", file_kind: kind, name: name || file.name };
@@ -60,24 +60,33 @@ export async function addSource(_prev: ActionState, formData: FormData): Promise
       revalidatePath("/knowledge");
       return fail("The upload did not finish. Try again.");
     }
-    await supabase.from("knowledge_sources").update({ storage_path: path, status: "queued" }).eq("id", src.id);
+    const { error: queueErr } = await supabase.from("knowledge_sources").update({ storage_path: path, status: "queued" }).eq("id", src.id);
+    if (queueErr) {
+      await supabase.from("knowledge_sources").update({ status: "failed", error: "Could not queue the document for processing." }).eq("id", src.id);
+      revalidatePath("/knowledge");
+      return fail("The document could not be queued. Please try again.");
+    }
   }
   revalidatePath("/knowledge");
   return done("Added. It is being read now, which usually takes under a minute.");
 }
 
 export async function retrySource(id: string) {
-  const supabase = await supabaseServer();
+  const { supabase, role } = await currentMember();
+  if (!canEdit(role)) return;
   await supabase.from("knowledge_sources").update({ status: "queued", error: null }).eq("id", id);
   revalidatePath("/knowledge");
 }
 
 export async function deleteSource(id: string) {
-  const supabase = await supabaseServer();
-  const { data: src } = await supabase.from("knowledge_sources").select("storage_path").eq("id", id).single();
-  await supabase.from("knowledge_sources").delete().eq("id", id); // chunks and tables cascade
-  if (src?.storage_path) {
-    await adminClient().storage.from("knowledge").remove([src.storage_path]);
+  const { supabase, role } = await currentMember();
+  if (!canEdit(role)) return;
+  const { data: deleted } = await supabase.from("knowledge_sources").delete().eq("id", id).select("id,storage_path");
+  if (deleted && deleted.length > 0) {
+    const paths = deleted.map((d) => d.storage_path).filter((p): p is string => Boolean(p));
+    if (paths.length > 0) {
+      await adminClient().storage.from("knowledge").remove(paths);
+    }
   }
   revalidatePath("/knowledge");
 }

@@ -4,7 +4,7 @@ import re
 from vp_core.text import spoken_rupees
 
 _ABBREV = {r"\bDr\.?(?=\s)": "Doctor", r"\bMon\b": "Monday", r"\bTue\b": "Tuesday", r"\bWed\b": "Wednesday",
-           r"\bThu\b": "Thursday", r"\bFri\b": "Friday", r"\bSat\b": "Saturday", r"\bSun\b": "Sunday"}
+           r"\bThu\b": "Thursday", r"\bFri\b": "Friday", r"\bSat\b": "Saturday", r"\bSun\b(?!\s+[A-Z])": "Sunday"}
 
 
 def _digits(m: re.Match) -> str:
@@ -18,6 +18,6 @@ def normalize_for_speech(text: str) -> str:
     t = spoken_rupees(t)
     for pat, rep in _ABBREV.items():
         t = re.sub(pat, rep, t)
-    t = re.sub(r"\b\d{7,}\b", _digits, t)                  # phone / account numbers: digit by digit
+    t = re.sub(r"\b\d{7,}\b(?!\s*rupees\b)", _digits, t)  # phone / account numbers: digit by digit (preserve prices)
     t = re.sub(r"\s+", " ", t)
     return t.strip()

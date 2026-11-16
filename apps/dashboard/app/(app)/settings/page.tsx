@@ -20,9 +20,17 @@ export default async function SettingsPage() {
   // Only the last 4 characters and the status: the key itself stays on the server (D-124).
   let keyInfo: OpenAIKeyInfo = null;
   if (tenantId) {
-    const { data: k } = await adminClient().from("tenant_api_keys").select("last4,status,checked_at,use_for")
+    const { data: k } = await adminClient().from("tenant_api_keys").select("last4,status,checked_at,use_for,secret_enc")
       .eq("tenant_id", tenantId).eq("provider", "openai").maybeSingle();
-    keyInfo = k;
+    if (k) {
+      try {
+        const { decryptSecret } = await import("@/lib/server-security");
+        decryptSecret(k.secret_enc);
+        keyInfo = k;
+      } catch {
+        keyInfo = { ...k, status: "could_not_decrypt" as any };
+      }
+    }
   }
   return (
     <>

@@ -47,15 +47,20 @@ export async function eraseCaller(_prev: ActionState, formData: FormData): Promi
   if (formData.get("confirm") !== "on") return fail("Tick the box to confirm. This cannot be undone.");
   const phone = toE164(String(formData.get("phone") ?? ""));
   if (!phone) return fail("Enter the caller's 10-digit mobile number, or the full number starting with + for a number outside India.");
-  // Audio files are not in the database, so remove them first (the erase function below cannot reach storage).
+  // Find recording paths before the database rows are deleted
   const { data: rec } = await supabase.from("calls").select("recording_path").eq("tenant_id", tenantId).eq("caller_number", phone).not("recording_path", "is", null);
-  const paths = (rec ?? []).map((r) => r.recording_path as string);
-  if (paths.length) {
-    const { error: rmErr } = await adminClient().storage.from("recordings").remove(paths);
-    if (rmErr) return fail("Could not delete the recordings, so nothing was erased. Try again.");
-  }
+  const paths = (rec ?? []).map((r) => r.recording_path as string).filter(Boolean);
+
+  // Run the database deletion first: if the database call fails, audio files remain intact
   const { data, error } = await supabase.rpc("erase_caller", { p_tenant: tenantId, p_phone: phone });
   if (error) return fail("Could not erase. " + dbMessage(error));
+
+  // Once database rows are safely removed, clean up storage objects
+  if (paths.length) {
+    const { error: rmErr } = await adminClient().storage.from("recordings").remove(paths);
+    if (rmErr) console.warn("could not remove audio recordings from storage:", rmErr);
+  }
+
   const r = data as { calls: number; contacts: number; callbacks: number };
   revalidatePath("/calls");
   return done(`Erased ${r.calls} call${r.calls === 1 ? "" : "s"} with transcripts and ${paths.length} recording${paths.length === 1 ? "" : "s"}, ${r.contacts} saved profile${r.contacts === 1 ? "" : "s"} and ${r.callbacks} callback request${r.callbacks === 1 ? "" : "s"}.`);
@@ -70,12 +75,14 @@ const SAVE_MESSAGES: Record<KeyCheck, string> = {
   invalid: "OpenAI did not accept this key. Check that you copied all of it.",
   unchecked: "Saved.",
   unreachable: "Saved, but OpenAI could not be reached to check it. It will be checked on first use.",
+  could_not_decrypt: "The saved key could not be decrypted. Please save it again.",
 };
 const RECHECK_MESSAGES: Record<Exclude<KeyCheck, "unchecked">, string> = {
   ok: "The key works.",
   no_credits: "Still no credits on this OpenAI account. The free model is being used.",
   invalid: "OpenAI no longer accepts this key. Save a new one.",
   unreachable: "OpenAI could not be reached. Try again in a moment.",
+  could_not_decrypt: "The saved key could not be read (server encryption key changed). Save the key again.",
 };
 
 async function keyAdmin() {
@@ -112,6 +119,8 @@ export async function recheckOpenAIKey(): Promise<ActionState> {
   try {
     key = decryptSecret(data.secret_enc);
   } catch {
+    await db.from("tenant_api_keys").update({ status: "invalid", checked_at: new Date().toISOString() }).eq("tenant_id", tenantId).eq("provider", "openai");
+    revalidatePath("/settings");
     return fail("The saved key could not be read (the server's encryption key changed). Save the key again.");
   }
   const check = await checkOpenAIKey(key);

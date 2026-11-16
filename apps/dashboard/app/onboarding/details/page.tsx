@@ -65,7 +65,7 @@ export default async function DetailsStep({ searchParams }: { searchParams: Prom
         </aside>
       </div>
       {error && <p role="alert" className="text-[13px] text-danger-fg">{error}</p>}
-      <WizardFooter backHref="/onboarding/business-type" primary="Continue" />
+      <WizardFooter backHref={`/onboarding/business-type?agent=${agent}`} primary="Continue" />
     </form>
   );
 }

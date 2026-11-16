@@ -121,6 +121,7 @@ const KEY_USES = [
 
 const KEY_BADGE = {
   ok: ["success", "Working"], no_credits: ["warning", "No credits"], invalid: ["danger", "Not accepted"], unchecked: ["neutral", "Not checked yet"],
+  could_not_decrypt: ["danger", "Could not be read, save it again"],
 } as const;
 
 // The workspace's own OpenAI key (D-124). The saved key is never sent back to the browser, only its last 4 characters.
@@ -146,6 +147,9 @@ export function OpenAIKeyForm({ info, canEdit }: { info: OpenAIKeyInfo; canEdit:
       </div>
       {info?.status === "no_credits" && (
         <p className="text-[13px] text-warning-fg">This OpenAI account has run out of credits. Add credits in OpenAI&apos;s billing settings, then press Check again.</p>
+      )}
+      {info?.status === "could_not_decrypt" && (
+        <p className="text-[13px] text-danger-fg">The saved key could not be read (the server encryption key changed). Please save the key again.</p>
       )}
       <form action={save} className="flex flex-col gap-4">
         <Field label={info ? "Replace with a new key" : "OpenAI key"} helper="Starts with sk-. It is stored encrypted and is never shown again.">

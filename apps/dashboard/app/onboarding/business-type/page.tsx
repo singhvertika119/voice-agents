@@ -3,10 +3,11 @@ import { Button } from "@/components/ui";
 import { BUSINESS_TYPES } from "@/lib/templates";
 import { startFromTemplate } from "../actions";
 
-export default async function BusinessTypeStep({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error } = await searchParams;
+export default async function BusinessTypeStep({ searchParams }: { searchParams: Promise<{ error?: string; agent?: string }> }) {
+  const { error, agent } = await searchParams;
   return (
     <form action={startFromTemplate} className="flex flex-col gap-7 flex-1">
+      {agent && <input type="hidden" name="agent" value={agent} />}
       <div>
         <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.01em]">What kind of business do you run?</h1>
         <p className="text-[15px] text-ink-muted mt-2">We will start your agent with sensible rules for it. You can change everything later.</p>

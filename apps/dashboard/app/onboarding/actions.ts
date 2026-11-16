@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { VOICES, findPlaceholders, type AgentConfig } from "@/lib/agent-config";
-import { currentMember } from "@/lib/membership";
+import { currentMember, isAdmin } from "@/lib/membership";
 import { indianMobile } from "@/lib/phone";
+import { adminClient } from "@/lib/supabase/admin";
 import { supabaseServer } from "@/lib/supabase/server";
 import { BUSINESS_TYPES, LANGUAGES, businessType, buildGreeting, buildInstructions, buildNotes, templateConfig, type Details } from "@/lib/templates";
 import { createAgent, latestVersion, publishVersion, saveConfig } from "@/lib/versions";
@@ -29,6 +30,21 @@ export async function startFromTemplate(formData: FormData) {
   if (!type) redirect("/onboarding/business-type?error=" + encodeURIComponent("Choose the kind of business first."));
   const { supabase, tenantId } = await currentMember();
   if (!tenantId) redirect("/login");
+
+  const existingAgentId = String(formData.get("agent") ?? "").trim();
+  if (existingAgentId) {
+    const err = await updateConfig(existingAgentId, (c) => {
+      const t = templateConfig(type);
+      c.greeting = t.greeting;
+      c.instructions = t.instructions;
+      c.knowledge = t.knowledge;
+      c.wizard = { type: type.id };
+    });
+    if (!err) {
+      redirect(next("details", existingAgentId));
+    }
+  }
+
   const made = await createAgent(supabase, tenantId, "My agent", { ...templateConfig(type), wizard: { type: type.id } }, "Setup wizard");
   if ("error" in made) redirect("/onboarding/business-type?error=" + encodeURIComponent("Could not create your agent. " + made.error));
   redirect(next("details", made.id));
@@ -63,7 +79,9 @@ export async function saveDetails(agentId: string, formData: FormData) {
   const { supabase, tenantId } = await currentMember();
   await supabase.from("agents").update({ name, updated_at: new Date().toISOString() }).eq("id", agentId);
   if (phone && tenantId) {
-    await supabase.from("tenant_settings").upsert({ tenant_id: tenantId, handoff_phone: phone, updated_at: new Date().toISOString() });
+    // tenant_settings write requires admin/owner; use adminClient so editor setup does not fail silently
+    const { error: tsErr } = await adminClient().from("tenant_settings").upsert({ tenant_id: tenantId, handoff_phone: phone, updated_at: new Date().toISOString() });
+    if (tsErr) console.warn("could not update handoff_phone in tenant_settings:", tsErr);
   }
   redirect(next("knowledge", agentId));
 }
@@ -92,13 +110,14 @@ export async function saveVoice(agentId: string, formData: FormData) {
 
 // Step 5: publish. Placeholders block it, exactly as in the agent builder.
 export async function goLive(agentId: string) {
-  const supabase = await supabaseServer();
+  const { supabase, role } = await currentMember();
   const v = await latestVersion(supabase, agentId);
   if (!v) redirect(back("test-call", agentId, "Could not load your agent."));
   if (!v.config.wizard?.details) redirect(back("test-call", agentId, "Fill in the business details first (step 2)."));
   const left = findPlaceholders(v.config);
   if (left.length) redirect(back("test-call", agentId, `Replace ${left.join(", ")} first. The agent would say it out loud.`));
-  const err = await publishVersion(supabase, agentId, v.version, false,
+  const canOverride = isAdmin(role);
+  const err = await publishVersion(supabase, agentId, v.version, canOverride,
     "This workspace requires passing the test conversations before publishing. Open the agent's Tests tab.");
   if (err) redirect(back("test-call", agentId, err));
   revalidatePath("/agents");
